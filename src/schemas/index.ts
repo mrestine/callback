@@ -4,15 +4,21 @@ import { z } from 'zod'
  * Shared validation schemas — imported by the React forms (via zodResolver) and
  * by the /api handlers to validate request bodies. Keep this file free of any
  * React or Node imports so both sides can use it.
+ *
+ * Optional fields use `z.preprocess` to fold empty strings / null (what HTML
+ * form controls and omitted JSON keys produce) down to `undefined` before the
+ * inner check runs. Output types are therefore clean (`string`, `number`,
+ * `Date`); the trade-off is that `z.input` of a preprocessed field is `unknown`.
  */
 
 const trimmed = z.string().trim()
-const optionalText = trimmed.max(10_000).optional().or(z.literal('').transform(() => undefined))
-const optionalUrl = trimmed
-  .max(2048)
-  .url()
-  .optional()
-  .or(z.literal('').transform(() => undefined))
+const emptyToUndefined = (v: unknown) => (v === '' || v === null ? undefined : v)
+
+const optionalText = z.preprocess(emptyToUndefined, trimmed.max(10_000).optional())
+const optionalUrl = z.preprocess(emptyToUndefined, trimmed.max(2048).url().optional())
+const optionalEmail = z.preprocess(emptyToUndefined, trimmed.max(320).email().optional())
+const optionalId = z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional())
+const optionalDate = z.preprocess(emptyToUndefined, z.coerce.date().optional())
 
 // --- enums ---------------------------------------------------------------
 export const CONTACT_KINDS = ['friend', 'recruiter', 'hiring_mgr', 'referral', 'other'] as const
@@ -55,21 +61,21 @@ export const companyUpdate = companyCreate.partial()
 // --- contacts --------------------------------------------------------
 export const contactCreate = z.object({
   name: trimmed.min(1).max(200),
-  company_id: z.coerce.number().int().positive().optional(),
+  company_id: optionalId,
   role: optionalText,
   kind: contactKind.default('other'),
-  email: trimmed.max(320).email().optional().or(z.literal('').transform(() => undefined)),
+  email: optionalEmail,
   linkedin_url: optionalUrl,
   warmth: warmth.default('cold'),
   notes: optionalText,
-  last_contact_at: z.coerce.date().optional(),
+  last_contact_at: optionalDate,
 })
 export const contactUpdate = contactCreate.partial()
 
 // --- applications ---------------------------------------------------
 export const applicationCreate = z.object({
   company_id: z.coerce.number().int().positive(),
-  contact_id: z.coerce.number().int().positive().optional(),
+  contact_id: optionalId,
   role_title: trimmed.min(1).max(300),
   jd_url: optionalUrl,
   source: optionalText,
@@ -77,7 +83,7 @@ export const applicationCreate = z.object({
   location: optionalText,
   remote: remoteMode.optional(),
   salary_range: optionalText,
-  applied_at: z.coerce.date().optional(),
+  applied_at: optionalDate,
   notes: optionalText,
 })
 export const applicationUpdate = applicationCreate.partial()
@@ -85,11 +91,11 @@ export const applicationUpdate = applicationCreate.partial()
 // --- events --------------------------------------------------------
 export const eventCreate = z
   .object({
-    application_id: z.coerce.number().int().positive().optional(),
-    contact_id: z.coerce.number().int().positive().optional(),
+    application_id: optionalId,
+    contact_id: optionalId,
     type: eventType.default('note'),
     body: optionalText,
-    occurred_at: z.coerce.date().optional(),
+    occurred_at: optionalDate,
   })
   .refine((v) => v.application_id != null || v.contact_id != null, {
     message: 'An event must reference an application or a contact',

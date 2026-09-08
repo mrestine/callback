@@ -6,6 +6,10 @@ import { queryClient } from './lib/queryClient'
 import { RootLayout } from './App'
 import { LoginScreen } from './routes/LoginScreen'
 import { Dashboard } from './routes/Dashboard'
+import { Companies } from './routes/Companies'
+import { CompanyDetail } from './routes/CompanyDetail'
+import { Contacts } from './routes/Contacts'
+import { ContactDetail } from './routes/ContactDetail'
 import './index.css'
 
 const router = createBrowserRouter([
@@ -13,7 +17,13 @@ const router = createBrowserRouter([
   {
     path: '/',
     element: <RootLayout />,
-    children: [{ index: true, element: <Dashboard /> }],
+    children: [
+      { index: true, element: <Dashboard /> },
+      { path: 'companies', element: <Companies /> },
+      { path: 'companies/:id', element: <CompanyDetail /> },
+      { path: 'contacts', element: <Contacts /> },
+      { path: 'contacts/:id', element: <ContactDetail /> },
+    ],
   },
 ])
 
