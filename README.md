@@ -8,19 +8,22 @@ Neon Postgres. See [PHASE-1-PLAN.md](./PHASE-1-PLAN.md) for the full design.
 
 ```sh
 npm install
-cp .env.example .env.local     # then fill in the values
+cp .env.example .env           # then fill in the values (see Environment below)
 npm run db:apply               # create tables in the DB from schema.sql
-vercel dev                     # runs the SPA + /api functions together on :5173
+vercel dev --listen 5173       # runs the SPA + /api functions together on :5173
 ```
 
 `npm run dev` runs only the Vite frontend (no `/api`). Use `vercel dev` when you
-need the API routes.
+need the API routes. Pass `--listen 5173` so the origin matches `APP_BASE_URL`
+and the GitHub OAuth callback URL (its default port is 3000).
 
 ## Environment
 
-See `.env.example`. All values are server-side (no `VITE_` vars); the same keys
-must be set in the Vercel project for deployed environments, with `APP_BASE_URL`
-pointing at the production URL.
+Local dev reads `.env` (not `.env.local` — `vercel dev`'s function runtime only
+loads `.env`). All values are server-side; no `VITE_` vars. The same keys must be
+set in the Vercel project for deployed environments, with `APP_BASE_URL` pointing
+at the production URL. See `.env.example` for the full list and where each comes
+from.
 
 ## Layout
 
