@@ -149,7 +149,7 @@ export function ContactDetail() {
 
       <section>
         <h3 className="mb-2 text-sm font-semibold">Timeline ({events.length})</h3>
-        <Timeline events={events} />
+        <Timeline events={events} contactId={id} />
       </section>
     </div>
   )

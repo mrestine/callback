@@ -9,6 +9,7 @@ import type {
   Contact,
   ContactDetail,
   ContactKind,
+  EventRow,
   RemoteMode,
   Warmth,
 } from './types'
@@ -201,5 +202,47 @@ export function useDeleteApplication() {
   return useMutation({
     mutationFn: (id: number) => api.del<void>(`/api/applications${qs({ id })}`),
     onSuccess: () => invalidateApplicationViews(qc),
+  })
+}
+
+// --- events ----------------------------------------------------------
+export interface EventInput {
+  application_id?: number
+  contact_id?: number
+  type?: string
+  body?: string
+  occurred_at?: string
+}
+
+interface EventScope {
+  applicationId?: number
+  contactId?: number
+}
+
+function invalidateEventViews(qc: ReturnType<typeof useQueryClient>, scope: EventScope) {
+  if (scope.applicationId !== undefined) {
+    qc.invalidateQueries({ queryKey: ['application', scope.applicationId] })
+    qc.invalidateQueries({ queryKey: ['applications'] })
+  }
+  if (scope.contactId !== undefined) {
+    qc.invalidateQueries({ queryKey: ['contact', scope.contactId] })
+    qc.invalidateQueries({ queryKey: ['contacts'] })
+  }
+}
+
+export function useCreateEvent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: EventInput) => api.post<EventRow>('/api/events', body),
+    onSuccess: (_row, body) =>
+      invalidateEventViews(qc, { applicationId: body.application_id, contactId: body.contact_id }),
+  })
+}
+
+export function useDeleteEvent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (args: { id: number } & EventScope) => api.del<void>(`/api/events${qs({ id: args.id })}`),
+    onSuccess: (_res, args) => invalidateEventViews(qc, args),
   })
 }

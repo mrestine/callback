@@ -44,6 +44,9 @@ export const EVENT_TYPES = [
   'follow_up',
 ] as const
 
+/** Types a user can log by hand. `status_change` is written by the system only. */
+export const MANUAL_EVENT_TYPES = ['note', 'email', 'call', 'meeting', 'applied', 'follow_up'] as const
+
 export const contactKind = z.enum(CONTACT_KINDS)
 export const warmth = z.enum(WARMTH_LEVELS)
 export const applicationStatus = z.enum(APPLICATION_STATUSES)

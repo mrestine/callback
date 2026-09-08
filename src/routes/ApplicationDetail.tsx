@@ -156,7 +156,7 @@ export function ApplicationDetail() {
 
       <section>
         <h3 className="mb-2 text-sm font-semibold">Timeline ({events.length})</h3>
-        <Timeline events={events} />
+        <Timeline events={events} applicationId={id} />
       </section>
     </div>
   )
