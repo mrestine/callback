@@ -8,7 +8,7 @@ import { dirname, resolve } from 'node:path'
 import { config } from 'dotenv'
 import { neon } from '@neondatabase/serverless'
 
-config({ path: ['.env', '.env.local'] })
+config({ path: ['.env', '.env.local'], quiet: true })
 
 const url = process.env.DATABASE_URL
 if (!url) {

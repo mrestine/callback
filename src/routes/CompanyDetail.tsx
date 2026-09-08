@@ -121,9 +121,11 @@ export function CompanyDetail() {
           <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 dark:divide-gray-900 dark:border-gray-800">
             {applications.map((a) => (
               <li key={a.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                <span>{a.role_title}</span>
+                <Link to={`/applications/${a.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
+                  {a.role_title}
+                </Link>
                 <span className="flex items-center gap-3 text-gray-500">
-                  <Badge>{titleCase(a.status)}</Badge>
+                  <Badge tone={a.status}>{titleCase(a.status)}</Badge>
                   {a.applied_at && <span>{formatDate(a.applied_at)}</span>}
                 </span>
               </li>

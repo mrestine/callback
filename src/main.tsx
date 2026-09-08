@@ -10,6 +10,8 @@ import { Companies } from './routes/Companies'
 import { CompanyDetail } from './routes/CompanyDetail'
 import { Contacts } from './routes/Contacts'
 import { ContactDetail } from './routes/ContactDetail'
+import { Applications } from './routes/Applications'
+import { ApplicationDetail } from './routes/ApplicationDetail'
 import './index.css'
 
 const router = createBrowserRouter([
@@ -23,6 +25,8 @@ const router = createBrowserRouter([
       { path: 'companies/:id', element: <CompanyDetail /> },
       { path: 'contacts', element: <Contacts /> },
       { path: 'contacts/:id', element: <ContactDetail /> },
+      { path: 'applications', element: <Applications /> },
+      { path: 'applications/:id', element: <ApplicationDetail /> },
     ],
   },
 ])

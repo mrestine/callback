@@ -81,7 +81,7 @@ export const applicationCreate = z.object({
   source: optionalText,
   status: applicationStatus.default('lead'),
   location: optionalText,
-  remote: remoteMode.optional(),
+  remote: z.preprocess(emptyToUndefined, remoteMode.optional()),
   salary_range: optionalText,
   applied_at: optionalDate,
   notes: optionalText,

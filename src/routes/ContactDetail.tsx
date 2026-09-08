@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ContactForm } from '../components/ContactForm'
+import { Timeline } from '../components/Timeline'
 import { Badge, Button, EmptyState, ErrorNote, Loading, PageHeader } from '../components/ui'
 import { formatDate, titleCase, toDateInput } from '../lib/format'
 import { useContact, useDeleteContact, useUpdateContact } from '../lib/queries'
@@ -133,9 +134,11 @@ export function ContactDetail() {
           <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 dark:divide-gray-900 dark:border-gray-800">
             {applications.map((a) => (
               <li key={a.id} className="flex items-center justify-between px-3 py-2 text-sm">
-                <span>{a.role_title}</span>
+                <Link to={`/applications/${a.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
+                  {a.role_title}
+                </Link>
                 <span className="flex items-center gap-3 text-gray-500">
-                  <Badge>{titleCase(a.status)}</Badge>
+                  <Badge tone={a.status}>{titleCase(a.status)}</Badge>
                   {a.applied_at && <span>{formatDate(a.applied_at)}</span>}
                 </span>
               </li>
@@ -146,24 +149,7 @@ export function ContactDetail() {
 
       <section>
         <h3 className="mb-2 text-sm font-semibold">Timeline ({events.length})</h3>
-        {events.length === 0 ? (
-          <EmptyState>No events recorded. (Adding events comes in a later step.)</EmptyState>
-        ) : (
-          <ul className="space-y-2 text-sm">
-            {events.map((e) => (
-              <li key={e.id} className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-800">
-                <div className="flex items-center justify-between text-xs text-gray-500">
-                  <span>
-                    {titleCase(e.type)}
-                    {e.source === 'ai' && <span className="ml-1 text-purple-500">· AI</span>}
-                  </span>
-                  <span>{formatDate(e.occurred_at)}</span>
-                </div>
-                {e.body && <p className="mt-1 whitespace-pre-wrap">{e.body}</p>}
-              </li>
-            ))}
-          </ul>
-        )}
+        <Timeline events={events} />
       </section>
     </div>
   )

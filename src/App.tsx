@@ -5,6 +5,7 @@ import { useMe } from './lib/auth'
 
 const NAV = [
   { to: '/', label: 'Dashboard', end: true },
+  { to: '/applications', label: 'Applications', end: false },
   { to: '/companies', label: 'Companies', end: false },
   { to: '/contacts', label: 'Contacts', end: false },
 ]

@@ -104,13 +104,31 @@ export function PageHeader({ title, children }: { title: ReactNode; children?: R
   )
 }
 
-const warmthColor: Record<string, string> = {
-  cold: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300',
-  warm: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  strong: 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300',
+const neutral = 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+const green = 'bg-green-100 text-green-800 dark:bg-green-950 dark:text-green-300'
+const amber = 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+const blue = 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+const violet = 'bg-violet-100 text-violet-800 dark:bg-violet-950 dark:text-violet-300'
+const red = 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300'
+
+/** Tone keys map to warmth levels and application statuses. */
+const toneColor: Record<string, string> = {
+  // warmth
+  cold: neutral,
+  warm: amber,
+  strong: green,
+  // application status
+  lead: neutral,
+  applied: blue,
+  screen: blue,
+  onsite: violet,
+  offer: green,
+  rejected: red,
+  withdrawn: neutral,
+  ghosted: amber,
 }
 
 export function Badge({ children, tone }: { children: ReactNode; tone?: string }) {
-  const cls = (tone && warmthColor[tone]) || 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300'
+  const cls = (tone && toneColor[tone]) || neutral
   return <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>{children}</span>
 }

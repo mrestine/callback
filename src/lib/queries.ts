@@ -1,6 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
-import type { Company, CompanyDetail, Contact, ContactDetail, ContactKind, Warmth } from './types'
+import type {
+  Application,
+  ApplicationDetail,
+  ApplicationStatus,
+  Company,
+  CompanyDetail,
+  Contact,
+  ContactDetail,
+  ContactKind,
+  RemoteMode,
+  Warmth,
+} from './types'
 
 /**
  * Request bodies are form-shaped: strings straight from the inputs. The server's
@@ -28,6 +39,26 @@ export interface ContactInput {
 export interface ContactFilters {
   q?: string
   kind?: string
+  company_id?: number
+}
+
+export interface ApplicationInput {
+  company_id: string
+  contact_id?: string
+  role_title: string
+  jd_url?: string
+  source?: string
+  status?: ApplicationStatus
+  location?: string
+  remote?: RemoteMode | ''
+  salary_range?: string
+  applied_at?: string
+  notes?: string
+}
+
+export interface ApplicationFilters {
+  q?: string
+  status?: string
   company_id?: number
 }
 
@@ -122,5 +153,53 @@ export function useDeleteContact() {
   return useMutation({
     mutationFn: (id: number) => api.del<void>(`/api/contacts${qs({ id })}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['contacts'] }),
+  })
+}
+
+// --- applications ------------------------------------------------------
+/** An application mutation can change lists embedded in company / contact detail. */
+function invalidateApplicationViews(qc: ReturnType<typeof useQueryClient>, id?: number) {
+  qc.invalidateQueries({ queryKey: ['applications'] })
+  if (id !== undefined) qc.invalidateQueries({ queryKey: ['application', id] })
+  qc.invalidateQueries({ queryKey: ['company'] })
+  qc.invalidateQueries({ queryKey: ['contact'] })
+}
+
+export function useApplications(filters: ApplicationFilters) {
+  return useQuery({
+    queryKey: ['applications', filters],
+    queryFn: () => api.get<Application[]>(`/api/applications${qs({ ...filters })}`),
+  })
+}
+
+export function useApplication(id: number) {
+  return useQuery({
+    queryKey: ['application', id],
+    queryFn: () => api.get<ApplicationDetail>(`/api/applications${qs({ id })}`),
+  })
+}
+
+export function useCreateApplication() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: ApplicationInput) => api.post<Application>('/api/applications', body),
+    onSuccess: () => invalidateApplicationViews(qc),
+  })
+}
+
+export function useUpdateApplication(id: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: Partial<ApplicationInput>) =>
+      api.patch<Application>(`/api/applications${qs({ id })}`, body),
+    onSuccess: () => invalidateApplicationViews(qc, id),
+  })
+}
+
+export function useDeleteApplication() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.del<void>(`/api/applications${qs({ id })}`),
+    onSuccess: () => invalidateApplicationViews(qc),
   })
 }
