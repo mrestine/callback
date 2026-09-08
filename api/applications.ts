@@ -45,7 +45,9 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
     select a.*,
       co.name as company_name,
       ct.name as contact_name,
-      (select max(occurred_at) from events e where e.application_id = a.id) as last_event_at
+      -- "last activity" = when something was last recorded, not when a future
+      -- scheduled round is dated
+      (select max(created_at) from events e where e.application_id = a.id) as last_event_at
     from applications a
     join companies co on co.id = a.company_id
     left join contacts ct on ct.id = a.contact_id

@@ -66,15 +66,27 @@ create table if not exists events (
   application_id bigint references applications (id) on delete cascade,
   contact_id     bigint references contacts (id) on delete cascade,
   type           text not null
-                 check (type in ('note', 'email', 'call', 'meeting',
+                 check (type in ('note', 'email', 'call', 'interview',
                                  'status_change', 'applied', 'follow_up')),
+  -- free-form round detail: "Technical", "Behavioral", "Hiring manager", "Intro", …
+  subtype        text,
   body           text,
   old_status     text,
   new_status     text,
   occurred_at    timestamptz not null default now(),
+  -- 'scheduled' = a future round the user has booked; 'logged' = it happened.
+  status         text not null default 'logged' check (status in ('scheduled', 'logged')),
   source         text not null default 'manual' check (source in ('manual', 'ai')),
   created_at     timestamptz not null default now()
 );
+
+-- migrations for databases created before these columns / values existed
+alter table events add column if not exists status text not null default 'logged';
+alter table events add column if not exists subtype text;
+alter table events drop constraint if exists events_type_check;
+update events set type = 'interview' where type = 'meeting';
+alter table events add constraint events_type_check
+  check (type in ('note', 'email', 'call', 'interview', 'status_change', 'applied', 'follow_up'));
 
 create index if not exists contacts_user_company_idx on contacts (user_id, company_id);
 create index if not exists applications_user_status_idx on applications (user_id, status);
@@ -82,3 +94,4 @@ create index if not exists applications_user_company_idx on applications (user_i
 create index if not exists events_user_occurred_idx on events (user_id, occurred_at desc);
 create index if not exists events_application_idx on events (application_id, occurred_at desc);
 create index if not exists events_contact_idx on events (contact_id, occurred_at desc);
+create index if not exists events_upcoming_idx on events (user_id, occurred_at) where status = 'scheduled';

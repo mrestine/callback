@@ -12,7 +12,16 @@ export function Companies() {
 
   return (
     <div>
-      <PageHeader title="Companies">
+      <PageHeader
+        title={
+          <>
+            Companies{' '}
+            {companies.data && (
+              <span className="font-normal text-gray-400">· {companies.data.length}</span>
+            )}
+          </>
+        }
+      >
         <Button onClick={() => setCreating((v) => !v)} variant={creating ? 'ghost' : 'primary'}>
           {creating ? 'Close' : 'New company'}
         </Button>

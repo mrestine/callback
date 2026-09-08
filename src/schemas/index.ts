@@ -38,20 +38,39 @@ export const EVENT_TYPES = [
   'note',
   'email',
   'call',
-  'meeting',
+  'interview',
   'status_change',
   'applied',
   'follow_up',
 ] as const
 
 /** Types a user can log by hand. `status_change` is written by the system only. */
-export const MANUAL_EVENT_TYPES = ['note', 'email', 'call', 'meeting', 'applied', 'follow_up'] as const
+export const MANUAL_EVENT_TYPES = ['note', 'email', 'call', 'interview', 'applied', 'follow_up'] as const
+
+export const EVENT_STATUSES = ['scheduled', 'logged'] as const
+
+/** Free-form `subtype` suggestions surfaced as a datalist in the composer. */
+export const EVENT_SUBTYPE_SUGGESTIONS = [
+  'Intro',
+  'Recruiter screen',
+  'Technical',
+  'System design',
+  'Coding',
+  'Behavioral',
+  'Hiring manager',
+  'Team match',
+  'Panel / onsite',
+  'Final / leadership',
+  'Offer',
+] as const
 
 export const contactKind = z.enum(CONTACT_KINDS)
 export const warmth = z.enum(WARMTH_LEVELS)
 export const applicationStatus = z.enum(APPLICATION_STATUSES)
 export const remoteMode = z.enum(REMOTE_MODES)
 export const eventType = z.enum(EVENT_TYPES)
+export const manualEventType = z.enum(MANUAL_EVENT_TYPES)
+export const eventStatus = z.enum(EVENT_STATUSES)
 
 // --- companies ---------------------------------------------------------
 export const companyCreate = z.object({
@@ -96,13 +115,23 @@ export const eventCreate = z
   .object({
     application_id: optionalId,
     contact_id: optionalId,
-    type: eventType.default('note'),
+    type: manualEventType.default('note'),
+    subtype: z.preprocess(emptyToUndefined, trimmed.max(80).optional()),
     body: optionalText,
+    // future dates schedule the event; the API derives `status` from this.
     occurred_at: optionalDate,
   })
   .refine((v) => v.application_id != null || v.contact_id != null, {
     message: 'An event must reference an application or a contact',
   })
+
+export const eventUpdate = z.object({
+  type: manualEventType.optional(),
+  subtype: z.preprocess(emptyToUndefined, trimmed.max(80).optional()),
+  body: optionalText,
+  occurred_at: optionalDate,
+  status: eventStatus.optional(),
+})
 
 export type CompanyCreate = z.infer<typeof companyCreate>
 export type ContactCreate = z.infer<typeof contactCreate>

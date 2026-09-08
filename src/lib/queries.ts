@@ -9,7 +9,9 @@ import type {
   Contact,
   ContactDetail,
   ContactKind,
+  DashboardData,
   EventRow,
+  EventStatus,
   RemoteMode,
   Warmth,
 } from './types'
@@ -92,7 +94,10 @@ export function useCreateCompany() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: CompanyInput) => api.post<Company>('/api/companies', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['companies'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['companies'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
   })
 }
 
@@ -134,7 +139,10 @@ export function useCreateContact() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (body: ContactInput) => api.post<Contact>('/api/contacts', body),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['contacts'] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contacts'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
   })
 }
 
@@ -164,6 +172,7 @@ function invalidateApplicationViews(qc: ReturnType<typeof useQueryClient>, id?: 
   if (id !== undefined) qc.invalidateQueries({ queryKey: ['application', id] })
   qc.invalidateQueries({ queryKey: ['company'] })
   qc.invalidateQueries({ queryKey: ['contact'] })
+  qc.invalidateQueries({ queryKey: ['dashboard'] })
 }
 
 export function useApplications(filters: ApplicationFilters) {
@@ -210,6 +219,7 @@ export interface EventInput {
   application_id?: number
   contact_id?: number
   type?: string
+  subtype?: string
   body?: string
   occurred_at?: string
 }
@@ -217,6 +227,14 @@ export interface EventInput {
 interface EventScope {
   applicationId?: number
   contactId?: number
+}
+
+export interface EventPatch {
+  type?: string
+  subtype?: string
+  body?: string
+  occurred_at?: string
+  status?: EventStatus
 }
 
 function invalidateEventViews(qc: ReturnType<typeof useQueryClient>, scope: EventScope) {
@@ -228,6 +246,7 @@ function invalidateEventViews(qc: ReturnType<typeof useQueryClient>, scope: Even
     qc.invalidateQueries({ queryKey: ['contact', scope.contactId] })
     qc.invalidateQueries({ queryKey: ['contacts'] })
   }
+  qc.invalidateQueries({ queryKey: ['dashboard'] })
 }
 
 export function useCreateEvent() {
@@ -239,10 +258,27 @@ export function useCreateEvent() {
   })
 }
 
+export function useUpdateEvent(scope: EventScope) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: number } & EventPatch) =>
+      api.patch<EventRow>(`/api/events${qs({ id })}`, patch),
+    onSuccess: () => invalidateEventViews(qc, scope),
+  })
+}
+
 export function useDeleteEvent() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (args: { id: number } & EventScope) => api.del<void>(`/api/events${qs({ id: args.id })}`),
     onSuccess: (_res, args) => invalidateEventViews(qc, args),
+  })
+}
+
+// --- dashboard -----------------------------------------------------
+export function useDashboard() {
+  return useQuery({
+    queryKey: ['dashboard'],
+    queryFn: () => api.get<DashboardData>('/api/dashboard'),
   })
 }

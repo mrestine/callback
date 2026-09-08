@@ -68,15 +68,19 @@ export interface Application {
   last_event_at?: string | null
 }
 
+export type EventStatus = 'scheduled' | 'logged'
+
 export interface EventRow {
   id: number
   application_id: number | null
   contact_id: number | null
   type: string
+  subtype: string | null
   body: string | null
   old_status: string | null
   new_status: string | null
   occurred_at: string
+  status: EventStatus
   source: 'manual' | 'ai'
   created_at: string
 }
@@ -99,4 +103,46 @@ export interface ApplicationDetail {
   company: Company | null
   contact: Contact | null
   events: EventRow[]
+}
+
+// --- dashboard ---------------------------------------------------------
+export interface StaleApplication {
+  id: number
+  role_title: string
+  status: ApplicationStatus
+  company_name: string
+  last_activity_at: string
+}
+
+export interface UpcomingEvent {
+  id: number
+  type: string
+  subtype: string | null
+  body: string | null
+  occurred_at: string
+  application_id: number | null
+  contact_id: number | null
+  role_title: string | null
+  company_name: string | null
+  contact_name: string | null
+}
+
+export interface ActivityItem {
+  kind: 'company' | 'contact' | 'application' | 'event'
+  id: number
+  label: string
+  sub: string | null
+  subtype: string | null
+  at: string
+  application_id: number | null
+  contact_id: number | null
+}
+
+export interface DashboardData {
+  activeApplications: number
+  activeCompanies: number
+  staleThresholdDays: number
+  stale: StaleApplication[]
+  upcoming: UpcomingEvent[]
+  recent: ActivityItem[]
 }

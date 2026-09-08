@@ -23,7 +23,16 @@ export function Applications() {
 
   return (
     <div>
-      <PageHeader title="Applications">
+      <PageHeader
+        title={
+          <>
+            Applications{' '}
+            {applications.data && (
+              <span className="font-normal text-gray-400">· {applications.data.length}</span>
+            )}
+          </>
+        }
+      >
         <Button onClick={() => setCreating((v) => !v)} variant={creating ? 'ghost' : 'primary'}>
           {creating ? 'Close' : 'New application'}
         </Button>

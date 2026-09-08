@@ -16,7 +16,16 @@ export function Contacts() {
 
   return (
     <div>
-      <PageHeader title="Contacts">
+      <PageHeader
+        title={
+          <>
+            Contacts{' '}
+            {contacts.data && (
+              <span className="font-normal text-gray-400">· {contacts.data.length}</span>
+            )}
+          </>
+        }
+      >
         <Button onClick={() => setCreating((v) => !v)} variant={creating ? 'ghost' : 'primary'}>
           {creating ? 'Close' : 'New contact'}
         </Button>
