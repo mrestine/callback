@@ -159,9 +159,13 @@ calibrated — treat it as a coarse 3-bucket hint (high / medium / low), never a
 probability. The number that drives whether the API acts is the API's own
 **match confidence** (§5), computed from how good the record match is.
 
-Model: `qwen2.5:7b-instruct` (q4_K_M or q5) as the default; the de-risking test
-(§ "Before building") picks the final one. `num_predict ≤ 200`. System prompt
-forbids preamble.
+Model: **`qwen2.5:7b-instruct`** (chosen 2026-09-10 after a bake-off — see
+`callback-worker/test-results/`). phi3.5 and gemma3:4b ignored negative
+instructions and couldn't hold the invite/scheduled distinction; qwen2.5:7b
+gets 12/12 `email_kind` and follows the field rules. ~6–13 s/email on the 3070,
+fine at a 60–120 s poll. `num_predict` 512. Temperature 0, JSON-schema `format`.
+Known soft spots to revisit with real traffic: `is_agency_recruiter` on novel
+recruiter domains, `role.title` under-extraction on vague pitches.
 
 ### 3a. Agencies vs employers  *(a hard operator convention)*
 
