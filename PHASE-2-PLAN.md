@@ -107,9 +107,10 @@ host and uses `docker exec`.
 ## Pipeline
 
 ### 1. Poll  *(worker, deterministic — Gmail labels are the state machine)*
-- Gmail API, OAuth **desktop** credentials (one-time consent), token cached in
-  `./secrets`. Scopes `gmail.modify` (read + label) + `gmail.send` (the digest
-  reply, §8).
+- Gmail API, OAuth **desktop-app** client (one-time consent). Scopes
+  `gmail.modify` (read + label) + `gmail.send` (the digest reply, §8). Client
+  JSON → `GMAIL_CREDENTIALS_PATH`, cached token → `GMAIL_TOKEN_PATH`, both in the
+  `./secrets` volume. See §1a — the token must not expire under the poller.
 - State via labels: `callback/inbox` → `callback/processing` →
   `callback/processed` | `callback/error`. (`callback/inbox` is applied by the
   operator's forwarding filter, §Intake.)
@@ -123,6 +124,36 @@ host and uses `docker exec`.
   no-op.
 - Fetch each message `users.messages.get?format=raw`, label it
   `callback/processing`.
+
+### 1a. Gmail auth — set up once, must not expire  *(the known pain point)*
+
+Past failure: an OAuth **consent screen left in "Testing"** revokes refresh
+tokens after 7 days, so the poller silently dies and needs a manual re-auth.
+One-time fixes so the refresh token is effectively permanent:
+
+- **Publish the consent screen** — status **"In production"**. Do *not* submit
+  for verification: the "Google hasn't verified this app" screen is fine for the
+  owner (`Advanced → Go to …`); the only limit on an unverified app is 100
+  users. This alone removes the 7-day expiry.
+- **New Desktop OAuth client** in the *same* GCP project as the old Openclaw
+  setup (Gmail API already enabled). Separate client so it can be revoked
+  without touching the calendar bot.
+- Request the token with `access_type=offline` + `prompt=consent` so a refresh
+  token is issued (and re-issued on re-consent), and persist it to
+  `GMAIL_TOKEN_PATH` in `./secrets`. The client auto-refreshes the access token
+  from it forever; no further human step.
+
+After that, the refresh token only dies from: a manual revoke at
+`myaccount.google.com/permissions`, the dev account's **password changing**
+(consumer accounts drop Gmail grants on password change), or 180 days unused
+(never, at this poll cadence).
+
+- **Fail loud, not silent.** On `invalid_grant` at refresh the worker logs
+  `FATAL`, touches nothing (messages stay in `callback/inbox`, re-picked up
+  after re-auth), and — since its own Gmail send is exactly what's broken —
+  relies on an **external dead-man's switch**: `HEALTHCHECK_URL` (optional; a
+  free healthchecks.io check) pinged on every successful poll. No ping for N
+  minutes → that service emails you, independent of the worker's Gmail.
 
 ### 2. Clean / normalise  *(worker, deterministic — no model)*
 - Parse MIME. Prefer `text/plain`; fall back to `text/html` → strip tags.
@@ -575,9 +606,10 @@ Env: `OLLAMA_URL` (`http://host.docker.internal:11434` in the container),
 `GMAIL_CREDENTIALS_PATH`, `GMAIL_TOKEN_PATH`, `GMAIL_QUERY` (the poll query),
 `GMAIL_LABEL_PREFIX` (default `callback/`), `KNOWN_AGENCY_DOMAINS`,
 `KNOWN_AGENCY_NAMES`, `POLL_INTERVAL_SECONDS`, `NOTIFY_REPLY` (send the §8 digest
-reply, default on), `NOTIFY_ON_DISMISS` (default off), `DRY_RUN` (extract +
-print, don't submit, relabel, or reply). **No Postgres / Neon string, no
-`WORKER_DB_PATH`.**
+reply, default on), `NOTIFY_ON_DISMISS` (default off), `HEALTHCHECK_URL`
+(optional dead-man's switch, §1a — pinged each successful poll), `DRY_RUN`
+(extract + print, don't submit, relabel, or reply). **No Postgres / Neon string,
+no `WORKER_DB_PATH`.**
 
 Node + TS (ecosystem match). Shares the event/status **enums** with `callback`
 via a copied `schemas` snippet or a tiny shared package.
@@ -589,8 +621,10 @@ via a copied `schemas` snippet or a tiny shared package.
    local fixtures and a local Ollama. **This is the model-tuning harness.**
    *(done)*
 2. Containerise: `Dockerfile` + `docker-compose.yml` (worker service). *(done)*
-3. `gmail.ts` — OAuth desktop consent, poll by label, fetch `format=raw`,
-   relabel `callback/inbox` → `callback/processing`.
+3. **Gmail auth first** (§1a): new Desktop OAuth client in the existing project,
+   publish the consent screen to "In production", run the `offline`+`consent`
+   flow once → `GMAIL_TOKEN_PATH`. Then `gmail.ts` — poll by label, fetch
+   `format=raw`, relabel `callback/inbox` → `callback/processing`, send reply.
 4. `submit.ts` (`POST /api/inbound`, retry/backoff) + `disambiguator.ts` +
    `notify.ts` (§8 digest reply) + `loop.ts` (poll → clean → extract → submit →
    disambiguate → **reply** → relabel; `callback/error` on a model failure).
@@ -682,6 +716,11 @@ Results in `callback-worker/test-results/`. The local path is viable.
   reviews from their normal inbox instead of polling the webapp; the thread
   becomes a human-readable audit log. Worker-only: needs `gmail.send`; `callback`
   stays email-free and just returns `review_url`. Toggle `NOTIFY_REPLY`.
+- **Gmail auth durability** (§1a) — new Desktop OAuth client in the existing GCP
+  project; **consent screen published to "In production"** (unverified is fine,
+  owner-only) so the refresh token doesn't expire every 7 days like the old
+  "Testing"-mode setup did. `access_type=offline` + `prompt=consent`. Optional
+  `HEALTHCHECK_URL` dead-man's switch alerts out-of-band if the poll loop stops.
 
 **Open**
 1. **Auto-apply policy (deferred, not off forever).** Once trusted, allow
