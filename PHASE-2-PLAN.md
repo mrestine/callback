@@ -50,7 +50,7 @@ point of contact. Consequences:
 | Datastore | Neon Postgres | **none** — Gmail labels are the state; one OAuth token file |
 | Knows about email | **no** | yes — the only thing that does |
 | Talks to models | **never** | the only thing that calls Ollama |
-| Role | matching, propose an action, review + approve UI over `inbound_actions` (no unattended writes to start) | poll → clean → extract → submit → (disambiguate) |
+| Role | matching, propose an action, review + approve UI over `inbound_actions` (no unattended writes to start) | poll → clean → extract → submit → (disambiguate) → digest reply |
 | New in P2 | `/api/inbound*`, `/api/tokens`, review UI; `inbound_actions` + `api_tokens` tables + `events.inbound_action_id` | entire repo |
 
 ### Service boundary
@@ -108,7 +108,8 @@ host and uses `docker exec`.
 
 ### 1. Poll  *(worker, deterministic — Gmail labels are the state machine)*
 - Gmail API, OAuth **desktop** credentials (one-time consent), token cached in
-  `./secrets`. Scope `gmail.modify` (read + label).
+  `./secrets`. Scopes `gmail.modify` (read + label) + `gmail.send` (the digest
+  reply, §8).
 - State via labels: `callback/inbox` → `callback/processing` →
   `callback/processed` | `callback/error`. (`callback/inbox` is applied by the
   operator's forwarding filter, §Intake.)
@@ -327,11 +328,44 @@ Every actionable row lands here — nothing is applied before this step.
   narrow the proposal — the row still waits for human **Approve**. If the model
   says "none", it's left as-is. `callback` never calls a model.
 
-### 8. Relabel  *(worker)*
-On a 2xx from `/api/inbound`, move the Gmail message from `callback/processing`
-to `callback/processed`. On a model failure in stage 3, move it to
-`callback/error` (operator can strip the label to retry). On a transport failure
-to `callback`, leave it in `callback/processing` — the next poll retries it.
+### 8. Notify + relabel  *(worker)*
+On a 2xx from `/api/inbound`:
+
+1. **Digest reply** (the nice-to-have — so the operator never has to open
+   `callback` to see what landed). The worker replies **to the forwarded
+   message's thread** (`In-Reply-To` / `References` = the forward's
+   `Message-ID`; `To:` = the forward's `From:`, i.e. the operator's personal
+   Gmail) with a short formatted summary built from the `/api/inbound` response:
+   - what the model read — `email_kind`, hiring company, role, sender;
+   - what `callback` matched — the application / contact it resolved to (or
+     "no match"), `match_confidence`;
+   - the **proposed action** awaiting approval, in plain words
+     ("→ would log an interview event on *Acme — Backend Engineer* for Tue
+     May 11, 2:00 PM");
+   - `status` (`needs_review` / `dismissed` / `duplicate`) and a one-click
+     **`review_url`** from the response.
+
+   Plain-text (with a minimal HTML alternative). `dismissed` / `duplicate` get a
+   single terse line, or are skipped entirely — `NOTIFY_ON_DISMISS` env, default
+   skip. Toggle the whole feature with `NOTIFY_REPLY` (default on); `DRY_RUN`
+   also suppresses it.
+
+   The reply won't re-ingest itself: it's sent from the dev account *to* the
+   personal account, so it's never `deliveredto:devacc+callback@…` and the
+   intake filter (§Intake) never labels it `callback/inbox`.
+2. **Relabel** `callback/processing` → `callback/processed`.
+
+On a model failure in stage 3, move it to `callback/error` (operator can strip
+the label to retry). On a transport failure to `callback`, leave it in
+`callback/processing` — the next poll retries it (idempotent re-submit; at worst
+a duplicate digest reply, which is harmless). The reply is sent **before** the
+relabel, so a crash in between just means the message is re-processed and the
+digest re-sent, never lost.
+
+The forwarded-email thread thus doubles as a human-readable audit log: the
+original email, then the worker's "here's what I did with it" reply, all in the
+operator's normal inbox. `callback` still sends nothing and knows nothing about
+email — the digest is entirely the worker rendering the API response.
 
 ---
 
@@ -408,7 +442,7 @@ which Phase 1 already supports. The known-agency list is **config**, not data:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/inbound` | bearer token | worker submits an extracted structure + `external_ref`; runs match + builds a proposal; **applies nothing**; returns `{status: needs_review \| needs_disambiguation \| dismissed \| duplicate, proposal?, candidates?}` |
+| POST | `/api/inbound` | bearer token | worker submits an extracted structure + `external_ref`; runs match + builds a proposal; **applies nothing**; returns `{status: needs_review \| needs_disambiguation \| dismissed \| duplicate, proposal?, candidates?, review_url}` (`review_url` = deep link to the row in the webapp, for the worker's digest reply, §8) |
 | POST | `/api/inbound/resolve?id=` | bearer token **or** session | worker posts `{choice}` after `needs_disambiguation` (narrows the proposal, still awaits approval); a human posts `{action:'apply', overrides?}` to approve, or `{action:'dismiss'}` to reject, from the review UI. `apply` is the only path that mutates domain data. |
 | GET | `/api/inbound` | session | list inbound actions (`?status=needs_review` = the review queue; else history) |
 | GET | `/api/inbound?id=` | session | one row + candidates + extraction |
@@ -432,8 +466,9 @@ src/
   model.ts         Ollama client: chat, format=schema, temperature 0, num_predict cap
   extractor.ts     render prompt + call model + validate -> extraction JSON
   disambiguator.ts render prompt + call model -> chosen candidate
-  gmail.ts         auth, poll by label, fetch (format=raw), relabel           (later)
+  gmail.ts         auth, poll by label, fetch (format=raw), relabel, send reply (later)
   submit.ts        POST /api/inbound / /api/inbound/resolve; retry/backoff    (later)
+  notify.ts        render the API response -> threaded digest reply (§8)      (later)
   loop.ts          orchestration + error handling + label transitions        (later)
 prompts/
   extract.system.md        the extraction instructions (incl. §3a agency rules, prose form)
@@ -476,8 +511,10 @@ Env: `OLLAMA_URL` (`http://host.docker.internal:11434` in the container),
 `OLLAMA_MODEL`, `CALLBACK_API_URL`, `CALLBACK_TOKEN`,
 `GMAIL_CREDENTIALS_PATH`, `GMAIL_TOKEN_PATH`, `GMAIL_QUERY` (the poll query),
 `GMAIL_LABEL_PREFIX` (default `callback/`), `KNOWN_AGENCY_DOMAINS`,
-`KNOWN_AGENCY_NAMES`, `POLL_INTERVAL_SECONDS`, `DRY_RUN` (extract + print, don't
-submit or relabel). **No Postgres / Neon string, no `WORKER_DB_PATH`.**
+`KNOWN_AGENCY_NAMES`, `POLL_INTERVAL_SECONDS`, `NOTIFY_REPLY` (send the §8 digest
+reply, default on), `NOTIFY_ON_DISMISS` (default off), `DRY_RUN` (extract +
+print, don't submit, relabel, or reply). **No Postgres / Neon string, no
+`WORKER_DB_PATH`.**
 
 Node + TS (ecosystem match). Shares the event/status **enums** with `callback`
 via a copied `schemas` snippet or a tiny shared package.
@@ -492,9 +529,11 @@ via a copied `schemas` snippet or a tiny shared package.
 3. `gmail.ts` — OAuth desktop consent, poll by label, fetch `format=raw`,
    relabel `callback/inbox` → `callback/processing`.
 4. `submit.ts` (`POST /api/inbound`, retry/backoff) + `disambiguator.ts` +
-   `loop.ts` (poll → clean → extract → submit → relabel; `callback/error` on a
-   model failure). Replaces the `main.ts` heartbeat. Build the `callback` side
-   (`inbound_actions`, `/api/inbound`, `/api/tokens`, review UI) alongside.
+   `notify.ts` (§8 digest reply) + `loop.ts` (poll → clean → extract → submit →
+   disambiguate → **reply** → relabel; `callback/error` on a model failure).
+   Replaces the `main.ts` heartbeat. Build the `callback` side (`inbound_actions`,
+   `/api/inbound` incl. `review_url` in the response, `/api/tokens`, review UI)
+   alongside. `notify.ts` can land last — the pipeline works without it.
 
 ---
 
@@ -510,7 +549,8 @@ via a copied `schemas` snippet or a tiny shared package.
 | 6 | Propose | `callback` rules | match + `email_kind` | a proposed action; row saved `needs_review` (or `dismissed` / `duplicate`). **No domain writes.** |
 | 7a | Disambiguate | worker → **model** ×1 | candidates from the response | `POST /api/inbound/resolve {choice}` narrows the proposal — or leave for human |
 | 7b | Review + approve | human → `callback` (session) | proposal + overrides | `{action:'apply'}` → events / status / contact / company written (`source='ai'`, `inbound_action_id`), row → `applied`; or `{action:'dismiss'}` |
-| 8 | Relabel | worker | 2xx from `callback` (or a model failure) | `callback/processed` (or `callback/error`) |
+| 8a | Notify | worker → Gmail | `/api/inbound` response (`proposal`, `match_confidence`, `status`, `review_url`) | threaded digest reply to the forward's `From:` (the operator) |
+| 8b | Relabel | worker | reply sent (or a model failure) | `callback/processed` (or `callback/error`) |
 
 Always-on path: **one model call per email** (stage 3). Stage 7a fires only on
 ambiguity. **Nothing mutates `callback`'s domain data before a human approves in
@@ -518,10 +558,11 @@ stage 7b** (to start — see Decisions). Neither service holds the other's DB
 string; `callback` never learns this is email. The only coupling is the
 `POST /api/inbound*` contract + the bearer token.
 
-Note: the worker relabels to `callback/processed` on the `/api/inbound` 2xx —
-i.e. once the row is *queued for review*, not once it's approved. Approval
-happens later in the webapp on its own schedule; the Gmail message is done being
-worked as soon as it's safely recorded.
+Note: on the `/api/inbound` 2xx the worker sends the digest reply (8a) then
+relabels to `callback/processed` (8b) — i.e. once the row is *queued for
+review*, not once it's approved. The operator reads the digest in their normal
+inbox and approves in the webapp on their own schedule; the Gmail message is
+done being worked as soon as it's safely recorded and the reply is out.
 
 ---
 
@@ -565,6 +606,12 @@ Results in `callback-worker/test-results/`. The local path is viable.
   **Approve** in the webapp applies a change (§6, §7). Auto-apply is deferred
   until the model + match heuristics have real-world calibration; the proposal
   machinery is built now so enabling it later is a policy toggle, not new code.
+- **Digest reply** (§8) — after each submission the worker replies in the
+  forwarded email's own thread with a formatted summary (what the model read,
+  what `callback` matched, the proposed action, a `review_url`). The operator
+  reviews from their normal inbox instead of polling the webapp; the thread
+  becomes a human-readable audit log. Worker-only: needs `gmail.send`; `callback`
+  stays email-free and just returns `review_url`. Toggle `NOTIFY_REPLY`.
 
 **Open**
 1. **Auto-apply policy (deferred, not off forever).** Once trusted, allow
