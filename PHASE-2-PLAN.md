@@ -261,6 +261,12 @@ Auto-apply mapping (only on a confident single-application match):
 | `status_update` / `application_confirmation` | `email` event with the summary |
 | `recruiter_outreach`, no application | contact resolved above + `email` event on the contact; `needs_review` if a named hiring company has no application yet |
 
+**Event `occurred_at`** = `extracted.event.occurred_at ?? ingested_emails.received_at`.
+The model only supplies a time when the email body states a *future* interview /
+call slot; for a rejection, confirmation, or note the API dates the event to the
+email itself (`received_at` = the original message date). The model is never
+asked to echo the email's own date.
+
 **Known limitation:** `applications.contact_id` is single-valued. If a second
 recruiter surfaces for a role that already has a contact, the API logs an
 `email` event ("also contacted by …") and leaves the primary contact. A
