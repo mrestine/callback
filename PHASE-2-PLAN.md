@@ -66,31 +66,28 @@ The worker is thin glue: poll → clean → one model call → `POST /api/ingest
 act on the response → label the message. Everything that needs to know the
 operator's data lives in `callback`.
 
-### Deployment — one box, one Docker network
+### Deployment — operator's desktop (Docker Desktop, Windows, RTX 3070)
 
-Both the model and the worker run as containers on the operator's desktop, on a
-single Docker bridge network. **Nothing Ollama-related is exposed to the LAN** —
-no cross-network routing to deal with.
+Two containers, managed **separately**:
 
-```
-callback-worker/docker-compose.yml
-  ├─ ollama   image ollama/ollama · GPU passthrough (NVIDIA Container Toolkit)
-  │           volume: model weights · port 11434 stays INTERNAL to the network
-  └─ worker   built from ./Dockerfile
-              env OLLAMA_URL=http://ollama:11434  (container-to-container)
-              volumes: ./data (SQLite: cursor + outbox), ./secrets (Gmail OAuth token)
-              no published ports (outbound only) — optional :<n> for a local health check
-```
+- **`ollama`** — the stock `ollama/ollama` image, its own container:
+  `docker run -d --name ollama --gpus=all --restart unless-stopped -v ollama:/root/.ollama -p 11434:11434 ollama/ollama`.
+  Its entrypoint is `serve`, so there's nothing to remember. `docker exec ollama
+  ollama pull <model>`.
+- **`callback-worker`** — `callback-worker/docker-compose.yml`, worker service
+  only. Reaches Ollama at **`OLLAMA_URL=http://host.docker.internal:11434`**
+  (Docker Desktop provides `host.docker.internal`; `network_mode: host` does not
+  work there). No published ports — outbound only (`host.docker.internal` for the
+  model, HTTPS to `CALLBACK_API_URL` for everything else). Volumes: a named
+  `data` volume (SQLite: cursor + outbox), and — for tuning — bind mounts of
+  `./fixtures` and `./prompts` so `.eml`s and prompt edits take effect without a
+  rebuild.
 
-- `docker compose up` on the desktop = the whole ingestion stack. Pull the model
-  once: `docker compose exec ollama ollama pull qwen2.5:7b-instruct`.
-- `worker` → `ollama`: internal DNS, `http://ollama:11434`.
-- `worker` → `callback`: outbound HTTPS to `CALLBACK_API_URL` (Vercel). The only
-  traffic that leaves the box. No inbound anything.
-- Prompts/schemas are baked into the `worker` image for reproducibility;
-  bind-mounted in a `docker-compose.dev.yml` overlay for tuning.
-- The tuning harness (`preprocess` / `extract` CLIs) runs against the same
-  container: `docker compose run --rm worker npm run extract fixtures/…`.
+`docker compose up --build -d` then `docker compose logs -f worker`. Run the
+tuning CLIs in the container: `docker exec callback-worker node dist/cli/batch.js fixtures/private`.
+
+The worker never exposes Ollama to the LAN; the operator SSHes into the Windows
+host and uses `docker exec`.
 
 ---
 
@@ -407,11 +404,17 @@ fixtures/
   sample/                  sanitised, committed
   private/                 real emails, gitignored
 Dockerfile
-docker-compose.yml         ollama + worker (see "Deployment")
-docker-compose.dev.yml     bind-mounts prompts/ + fixtures/ for tuning
+docker-compose.yml         worker service; bind-mounts fixtures/ + prompts/ for tuning (see "Deployment")
 .env.example
 README.md
 ```
+
+> Built so far (`mrestine/callback-worker`): Stage 1 (`preprocess`/`extract`/
+> `pipe`/`batch` CLIs, `clean.ts`, `model.ts`, `extractor.ts`, `schemas.ts`,
+> `prompts/extract.system.md` with inline few-shot) and Stage 2 (`Dockerfile`,
+> `docker-compose.yml`, `src/main.ts` = an Ollama-connectivity heartbeat until
+> the loop lands). Schemas are Zod in `src/schemas.ts` (no static `schemas/*.json`
+> — the model schema is generated via `zod-to-json-schema`).
 
 Prompts, few-shot examples, and JSON schemas that shape model behaviour **all
 live here** — `callback` holds none. The prose form of the agency convention
@@ -427,7 +430,7 @@ state — never domain data:
   written here first, then drained to `callback`. If `callback` is down nothing
   is lost. **At-least-once**; the receiver is idempotent.
 
-Env: `OLLAMA_URL` (default `http://ollama:11434`), `OLLAMA_MODEL`,
+Env: `OLLAMA_URL` (`http://host.docker.internal:11434` in the container), `OLLAMA_MODEL`,
 `CALLBACK_API_URL`, `CALLBACK_TOKEN`, `WORKER_DB_PATH`,
 `GMAIL_CREDENTIALS_PATH`, `GMAIL_TOKEN_PATH`, `GMAIL_QUERY`,
 `KNOWN_AGENCY_DOMAINS`, `KNOWN_AGENCY_NAMES`, `POLL_INTERVAL_SECONDS`,
@@ -470,7 +473,7 @@ ambiguity. Neither service holds the other's DB string; the only coupling is the
 
 ## Before building — de-risk the model (do this first)
 
-Forward ~10 real job emails. Run `qwen2.5:7b-instruct`, `llama3.1:8b-instruct`,
+Forward ~10 real job emails. Run `qwen2.5:7b`, `llama3.1:8b`, `gemma3:4b`,
 and `phi3.5` against the stage-3 constrained prompt at `temperature 0`,
 `num_predict 200`, JSON-schema `format`. Judge: correct `email_kind`, correct
 company/role/contact extraction, no waffling, valid JSON every time. Commit to
