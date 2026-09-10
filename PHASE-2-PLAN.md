@@ -51,7 +51,7 @@ point of contact. Consequences:
 | Knows about email | **no** | yes — the only thing that does |
 | Talks to models | **never** | the only thing that calls Ollama |
 | Role | matching, propose an action, review + approve UI over `inbound_actions` (no unattended writes to start) | poll → clean → extract → submit → (disambiguate) → digest reply |
-| New in P2 | `/api/inbound*`, `/api/tokens`, review UI; `inbound_actions` + `api_tokens` tables + `events.inbound_action_id` | entire repo |
+| New in P2 | `/api/inbound*`, `/api/tokens`, review UI; `inbound_actions` + `api_tokens` tables + `events.inbound_action_id` (+ `applications.inbound_action_id`) | entire repo |
 
 ### Service boundary
 
@@ -250,55 +250,102 @@ review UI renders `summary` + `extracted`.
    strongest signal, and it's what makes a mis-classified 2nd/3rd email in a
    thread harmless (the contact/app link is already set). Same `thread_key` +
    same `occurred_at` also flags a likely double-send → `duplicate`.
-5. Emit `{ contact_id?, company_id?, application_id?, match_confidence:
-   high|medium|low, candidates: [...], ambiguities: [...] }`.
+5. Emit a **per-entity** match block — `{ contact: {chosen?, candidates:[{id,label,score}]},
+   company: {...}, application: {...} }` — stored as `inbound_actions.match`. §6
+   attaches the relevant block to each op it generates. `chosen` is set only when
+   a match is unambiguous and strong (exact email, `thread_key` continuity, a
+   lone active application); otherwise it's null and the op is a candidate
+   picker.
 
-### 6. Decide  *(API — builds a suggested action; does NOT apply it)*
+### 6. Propose — compile the extraction into an operation list  *(API, no model, no writes)*
 
-**Everything goes through the approval queue to start.** `/api/inbound` never
-mutates domain data (`companies` / `contacts` / `applications` / `events`). It
-matches (§5), builds a **proposed action**, and stores the row as
-`status='needs_review'`. The operator approves (or edits, or rejects) each one
-in the Review UI (§7). The one exception: `noise` / `!job_related` →
-`status='dismissed'`, nothing proposed. `duplicate` (§5.4) → `status='duplicate'`.
+`payload` (the §3 extraction) is **flat** and never maps 1:1 to domain rows. The
+API compiles it — plus the §5 matches — into **`proposal`: an ordered list of
+typed operations**, and stores the row `status='needs_review'`. Nothing is
+written. (`noise` / `!job_related` → `dismissed`, no proposal; double-send →
+`duplicate`.) Auto-apply is a later toggle (see Decisions) and reuses this exact
+list — it's built now, just not fired automatically.
 
-Rationale: the model and the match heuristics need real-world calibration before
-anything writes unattended. Auto-apply is a later toggle (see Decisions), and
-the proposed-action machinery below is exactly what it will reuse — so it's
-built now, just not fired automatically.
+**Operation shape:**
+```jsonc
+{
+  "id": "a1",                       // local handle, referenced by later ops
+  "op": "create_application",       // see table below
+  "args": { "role_title": "Backend Engineer", "status": "applied" },
+  "refs": { "company_id": "$c1" },  // "$id" -> the row another op resolves/creates
+  "match": {                        // what §5 found for THIS entity
+    "candidates": [{ "id": 213, "label": "Backend Engineer @ Acme", "score": 0.82 }],
+    "chosen": null,                 // an id = reuse it; null = create. API pre-fills if unambiguous
+    "confidence": "low"
+  },
+  "decision": "pending",            // pending | accept | skip   (operator sets these in review)
+  "reason": "confirmation names a role with no matching application"
+}
+```
 
-**Proposed action** (stored in `inbound_actions.match.proposal`, rendered as the
-pre-filled form in the Review UI):
+**Op types** — every create carries `source='ai'` + `inbound_action_id`:
 
-*Contact* — match `sender.email` against `contacts`; exact hit → reuse. No hit →
-propose *create contact*: if `is_agency_recruiter`, `company_id = NULL`,
-`role = "Recruiter - " + sender.org`, `kind = 'recruiter'`; otherwise
-`company_id` = the matched hiring company, `role`/`kind` from the model. Never
-propose creating a `companies` row from `sender.org`.
+| op | resolves / writes | skippable |
+|---|---|---|
+| `link_company` | `$cN` → an existing `companies` row (no write) | — |
+| `create_company` | a `companies` row from `hiring_company.name` | yes → "no company" |
+| `link_application` / `create_application` | resolve, or insert an `applications` row (`status` from `status_signal`, default `applied`) | create: yes |
+| `link_contact` / `create_contact` | resolve, or insert a `contacts` row (agency → `company_id=NULL`, `role="Recruiter - "+org`) | create: yes |
+| `add_event` | an `events` row (`type`, `subtype`, `occurred_at`, body) | yes |
+| `set_status` | `applications.status` + an auto status-change event | yes |
 
-*Company / application* — from `extracted.hiring_company` only (§5.3). If
-`withheld` / null → no company, no application; the proposal is just the contact
-+ an `email` event on the contact. If `name` present → the matched company (or
-"create company" if no match), then the matched application (never "create
-application" — that's always a manual choice in review).
+**Ordering & refs.** The API emits ops topologically — company → application →
+contact → event/status. Later ops reference earlier ones by `"$id"`; at apply
+time a ref resolves to the chosen existing id *or* the just-inserted id. Max
+depth is company → application → event, so it stays a short list, never a real
+graph. A `create_*` never invents an `applications` row silently — it's a
+visible, skippable op the reviewer sees.
 
-*Event / status* — by `email_kind`, on a single confident application match:
-| kind | proposed change (all `source='ai'`, `events.inbound_action_id` set) |
-|---|---|
-| `interview_scheduled` / `interview_invite` w/ a date | `interview` event (subtype, `occurred_at`, body = summary) |
-| `rejection` | application `status='rejected'` + status_change event + `email` event |
-| `offer` | application `status='offer'` + event |
-| `status_update` / `application_confirmation` | `email` event with the summary |
-| `recruiter_outreach` | contact + `email` event on the contact |
+**What each `email_kind` compiles to** (given the §5 matches):
 
-`match_confidence` and the candidate list ride along so the reviewer sees why
-this was proposed and can pick a different target.
+| kind | when everything matches | when the company / application is new |
+|---|---|---|
+| `recruiter_outreach`, agency / blind client | `link_contact` (or create, `company_id=NULL`) + `add_event` (email, on contact) | same — never a company or application |
+| `recruiter_outreach`, in-house | `link_contact` + `add_event` | `create_company` + `create_contact` + `add_event`; a **skippable** `create_application` |
+| `application_confirmation` | `link_application` + `add_event` (applied) | `create_company` + `create_application` (`applied`) + optional `create_contact` + `add_event` |
+| `interview_scheduled` / `_invite` w/ a date | `link_application` + `add_event` (interview, `occurred_at`) + `set_status` (screen/onsite) | prefixed with `create_company` + `create_application` |
+| `rejection` | `link_application` + `set_status` (rejected) + `add_event` | `create_*` then `set_status` (rare) |
+| `offer` | `link_application` + `set_status` (offer) + `add_event` | prefixed with `create_*` |
+| `status_update` | `link_application` + `add_event` (email) | `add_event` on the contact only |
 
-**Event `occurred_at`** (applied at approval time) =
-`extracted.event.occurred_at ?? inbound_actions.occurred_at`. The model only
-supplies a time when the email states a *future* interview / call slot;
-otherwise the event is dated to `occurred_at` from the submission (the original
-message date, which the worker passes but the model never echoes).
+So a known recruiter's note is a **1-op** proposal (`add_event`); a brand-new
+application confirmation from an unknown company is a **4-op** proposal. Same
+table, same review UI, same apply path.
+
+**Worked example — `application_confirmation`, company not yet tracked:**
+```jsonc
+// extraction: email_kind="application_confirmation",
+//   hiring_company={name:"Acme"}, role={title:"Backend Engineer"},
+//   sender={name:"Acme Recruiting", email:"no-reply@acme.io", is_agency_recruiter:false}
+"proposal": [
+  { "id":"c1", "op":"create_company", "args":{"name":"Acme"},
+    "match":{"candidates":[],"chosen":null}, "decision":"pending" },
+  { "id":"a1", "op":"create_application",
+    "args":{"role_title":"Backend Engineer","status":"applied"},
+    "refs":{"company_id":"$c1"}, "match":{"candidates":[],"chosen":null},
+    "decision":"pending" },
+  { "id":"ct1", "op":"create_contact",
+    "args":{"name":"Acme Recruiting","email":"no-reply@acme.io","kind":"other"},
+    "refs":{"company_id":"$c1"}, "match":{"candidates":[],"chosen":null},
+    "decision":"pending" },
+  { "id":"e1", "op":"add_event",
+    "args":{"type":"applied","occurred_at":"2026-09-08T14:02:00Z",
+            "body":"Application confirmed: Backend Engineer at Acme"},
+    "refs":{"application_id":"$a1","contact_id":"$ct1"}, "decision":"pending" }
+]
+```
+The reviewer can flip `ct1.decision` to `skip` (a `no-reply@` address isn't
+worth a contact) and approve the rest — the API then inserts the company, the
+application, and the event (with `contact_id` null) in one transaction.
+
+**Event `occurred_at`** on any `add_event` = `extracted.event.occurred_at ??
+inbound_actions.occurred_at` (a future slot the model stated, else the original
+message date — the worker passes it; the model never echoes it).
 
 **Known limitation:** `applications.contact_id` is single-valued. If a second
 recruiter surfaces for a role that already has a contact, the API logs an
@@ -309,24 +356,28 @@ recruiter surfaces for a role that already has a contact, the API logs an
 Every actionable row lands here — nothing is applied before this step.
 
 - The `inbound_actions` row *is* the review item (`status='needs_review'`). The
-  webapp shows a **Review** queue: the `summary`, the `extracted` structure, the
-  candidate matches, and the **proposed action** from §6 as a pre-filled form —
-  target application (with a picker), the event/status change, whether a contact
-  or company will be created.
-- Buttons: **Approve** (apply the proposal as shown), **Approve with edits**
-  (change the target / fields first), **Reject** (`status='dismissed'`, no
-  mutation). Approving calls `POST /api/inbound/resolve?id=` with
-  `{action:'apply', overrides?}`; the API then writes the events / status /
-  contact / company changes, sets `status='applied'`, and records exactly what
-  it did in `.applied`.
-- Only on **Approve** does `callback` create a contact, create a company, link
-  an application, write an event, or change an application status. Nothing here
-  says "email".
-- **Disambiguation lives in the worker.** When `/api/inbound` returns
-  `needs_disambiguation` + candidates, the worker runs a second model call
-  (multiple-choice) and calls `POST /api/inbound/resolve?id=` with the pick to
-  narrow the proposal — the row still waits for human **Approve**. If the model
-  says "none", it's left as-is. `callback` never calls a model.
+  webapp shows a **Review** queue: the `summary`, the `extracted` structure, and
+  the `proposal` op list from §6 rendered as a checklist — one row per op, each
+  with its target (a picker over `op.match.candidates` + "create new") and an
+  accept / skip toggle. Refs between ops are shown as indentation.
+- Buttons: **Approve** applies every `accept` op; **Reject** →
+  `status='dismissed'`, no mutation. "Approve with edits" is just approving
+  after toggling ops / changing pickers. Approving calls
+  `POST /api/inbound/resolve?id=` with
+  `{action:'apply', ops:{ "<id>": {decision, chosen?, args?}, ... }}` — the
+  per-op overrides.
+- **Apply is one transaction.** The API walks `proposal` in order: for each
+  non-`skip` op, use `match.chosen` (reuse) or insert; resolve `$refs` from
+  earlier ops' resulting ids; append `{id, op, result_id, created}` to
+  `applied`. Any error rolls the whole thing back and the row stays
+  `needs_review`. On success → `status='applied'`, `resolved_at=now()`.
+- Only here does `callback` write anything. Nothing in the UI says "email".
+- **Disambiguation lives in the worker.** `needs_disambiguation` = one or more
+  ops have `match.candidates` but no `chosen`. The worker runs a second model
+  call (multiple-choice) and `POST /api/inbound/resolve?id=` with
+  `{choice:{ "<op id>": <candidate id> }}` to fill them in — the row still waits
+  for a human **Approve**. If the model says "none", the ops are left for the
+  human. `callback` never calls a model.
 
 ### 8. Notify + relabel  *(worker)*
 On a 2xx from `/api/inbound`:
@@ -338,10 +389,10 @@ On a 2xx from `/api/inbound`:
    Gmail) with a short formatted summary built from the `/api/inbound` response:
    - what the model read — `email_kind`, hiring company, role, sender;
    - what `callback` matched — the application / contact it resolved to (or
-     "no match"), `match_confidence`;
-   - the **proposed action** awaiting approval, in plain words
-     ("→ would log an interview event on *Acme — Backend Engineer* for Tue
-     May 11, 2:00 PM");
+     "no match");
+   - the `proposal` ops in plain words, one line each ("• create company *Acme*
+     • create application *Backend Engineer* • log an `applied` event"), so a
+     multi-step create is legible at a glance;
    - `status` (`needs_review` / `dismissed` / `duplicate`) and a one-click
      **`review_url`** from the response.
 
@@ -383,15 +434,16 @@ create table inbound_actions (
   external_ref  text not null,              -- opaque dedup key from the worker
   occurred_at   timestamptz,                -- when the underlying thing happened
   summary       text,                       -- human-readable, from the worker
-  payload       jsonb,                      -- the §3 extraction, verbatim
-  match         jsonb,                      -- candidates + scores + proposal from §5/§6
+  payload       jsonb,                      -- the §3 extraction, verbatim (what the model said)
+  match         jsonb,                      -- raw §5 matching detail: per-entity candidates + scores
+  proposal      jsonb,                      -- §6 ordered op list; the reviewer edits this
   status        text not null default 'pending'
                 check (status in ('pending','needs_review','applied',
                                   'auto_applied','dismissed','duplicate','error')),
                 -- to start, actionable rows are always 'needs_review' -> 'applied'
                 -- on human approve. 'auto_applied' is reserved for the later
                 -- auto-apply toggle (Decisions).
-  applied       jsonb,                       -- {event_ids:[], status_change:{...}}
+  applied       jsonb,                       -- per-op results: [{id,op,result_id,created}] + applied_by/at
   error         text,
   created_at    timestamptz not null default now(),
   resolved_at   timestamptz,
@@ -409,6 +461,17 @@ alter table events
 ```
 Links a timeline entry back to the submission that produced it ("why did the AI
 do this?"). `set null` so events outlive a deleted action row.
+
+### `applications.inbound_action_id`  *(recommended)*
+```sql
+alter table applications
+  add column inbound_action_id bigint references inbound_actions (id) on delete set null;
+```
+Marks an application that AI ingestion created (vs one you added by hand) — so
+the UI can badge it and a bad apply can be traced back. `inbound_actions.applied`
+already records every `result_id` and `created` flag, so this is a convenience
+for querying/rendering, not the source of truth. `contacts` / `companies` can
+get the same column later if it earns its keep.
 
 ### `api_tokens` — worker → API auth
 ```sql
@@ -442,10 +505,10 @@ which Phase 1 already supports. The known-agency list is **config**, not data:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/inbound` | bearer token | worker submits an extracted structure + `external_ref`; runs match + builds a proposal; **applies nothing**; returns `{status: needs_review \| needs_disambiguation \| dismissed \| duplicate, proposal?, candidates?, review_url}` (`review_url` = deep link to the row in the webapp, for the worker's digest reply, §8) |
-| POST | `/api/inbound/resolve?id=` | bearer token **or** session | worker posts `{choice}` after `needs_disambiguation` (narrows the proposal, still awaits approval); a human posts `{action:'apply', overrides?}` to approve, or `{action:'dismiss'}` to reject, from the review UI. `apply` is the only path that mutates domain data. |
+| POST | `/api/inbound` | bearer token | worker submits an extracted structure + `external_ref`; runs match + compiles the `proposal` op list (§6); **applies nothing**; returns `{status: needs_review \| needs_disambiguation \| dismissed \| duplicate, proposal?, review_url}` (each op carries its own candidates; `review_url` = deep link to the row in the webapp, §8) |
+| POST | `/api/inbound/resolve?id=` | bearer token **or** session | worker posts `{choice:{op→id}}` after `needs_disambiguation` (fills op `chosen`s, still awaits approval); a human posts `{action:'apply', ops:{…}}` to approve (walk the ops in one txn) or `{action:'dismiss'}` to reject. `apply` is the only path that mutates domain data. |
 | GET | `/api/inbound` | session | list inbound actions (`?status=needs_review` = the review queue; else history) |
-| GET | `/api/inbound?id=` | session | one row + candidates + extraction |
+| GET | `/api/inbound?id=` | session | one row — `payload` + `match` + `proposal` |
 | POST | `/api/tokens` | session | create a token (raw returned once) |
 | GET | `/api/tokens` | session | list (no raw) |
 | DELETE | `/api/tokens?id=` | session | revoke |
@@ -545,11 +608,11 @@ via a copied `schemas` snippet or a tiny shared package.
 | 2 | Clean | worker | raw MIME (a forward) | unwrapped `{orig_subject, orig_from, orig_to, orig_date, body}` |
 | 3 | **Extract** | worker → **model** ×1 | subject/from/to/body | structured JSON + coarse confidences |
 | 4 | Submit | worker | extracted JSON + `external_ref` + `occurred_at` + `summary` + `thread_key` | `POST /api/inbound` (retry/backoff; stays in `callback/processing` until 2xx) |
-| 5 | Match | `callback` + SQL | `payload` (extracted JSON) | candidate ids + `match_confidence` |
-| 6 | Propose | `callback` rules | match + `email_kind` | a proposed action; row saved `needs_review` (or `dismissed` / `duplicate`). **No domain writes.** |
-| 7a | Disambiguate | worker → **model** ×1 | candidates from the response | `POST /api/inbound/resolve {choice}` narrows the proposal — or leave for human |
-| 7b | Review + approve | human → `callback` (session) | proposal + overrides | `{action:'apply'}` → events / status / contact / company written (`source='ai'`, `inbound_action_id`), row → `applied`; or `{action:'dismiss'}` |
-| 8a | Notify | worker → Gmail | `/api/inbound` response (`proposal`, `match_confidence`, `status`, `review_url`) | threaded digest reply to the forward's `From:` (the operator) |
+| 5 | Match | `callback` + SQL | `payload` (extracted JSON) | per-entity candidate ids + scores |
+| 6 | Propose | `callback` rules | match + `email_kind` | `proposal` = ordered op list (`create_*`/`link_*`/`add_event`/`set_status`, `$ref`-wired); row saved `needs_review` (or `dismissed` / `duplicate`). **No domain writes.** |
+| 7a | Disambiguate | worker → **model** ×1 | ops with candidates + no `chosen` | `POST /api/inbound/resolve {choice:{op→id}}` fills them — or leave for human |
+| 7b | Review + approve | human → `callback` (session) | `proposal` + per-op overrides | `{action:'apply', ops:{…}}` → API walks ops in **one txn**, reuse-or-insert, resolve `$refs`, write `applied`; row → `applied`. Or `{action:'dismiss'}` |
+| 8a | Notify | worker → Gmail | `/api/inbound` response (`proposal`, `status`, `review_url`) | threaded digest reply to the forward's `From:` (the operator) |
 | 8b | Relabel | worker | reply sent (or a model failure) | `callback/processed` (or `callback/error`) |
 
 Always-on path: **one model call per email** (stage 3). Stage 7a fires only on
@@ -606,6 +669,13 @@ Results in `callback-worker/test-results/`. The local path is viable.
   **Approve** in the webapp applies a change (§6, §7). Auto-apply is deferred
   until the model + match heuristics have real-world calibration; the proposal
   machinery is built now so enabling it later is a policy toggle, not new code.
+- **Proposal model** (§6) — the extraction is compiled into `proposal`, an
+  **ordered list of typed ops** (`create_company` / `create_application` /
+  `create_contact` / `link_*` / `add_event` / `set_status`) wired with `$ref`
+  placeholders. A simple email = 1 op; a new-application confirmation = a 4-op
+  create chain. One `inbound_actions` row per email is the unit of review;
+  approve = walk the ops in one transaction. `applied` records every
+  `{op, result_id, created}` for audit / undo.
 - **Digest reply** (§8) — after each submission the worker replies in the
   forwarded email's own thread with a formatted summary (what the model read,
   what `callback` matched, the proposed action, a `review_url`). The operator
