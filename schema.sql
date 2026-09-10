@@ -95,3 +95,59 @@ create index if not exists events_user_occurred_idx on events (user_id, occurred
 create index if not exists events_application_idx on events (application_id, occurred_at desc);
 create index if not exists events_contact_idx on events (contact_id, occurred_at desc);
 create index if not exists events_upcoming_idx on events (user_id, occurred_at) where status = 'scheduled';
+
+-- ============================================================================
+-- Phase 2 — AI email ingestion (see PHASE-2-PLAN.md)
+--
+-- `callback` stays source-agnostic: it never models email. The ingestion worker
+-- POSTs an extracted structure to /api/inbound; callback matches it, compiles a
+-- proposed set of ops, and parks it for human review. Nothing here says "email".
+-- ============================================================================
+
+-- fuzzy company / role name matching in /api/inbound (similarity(), % operator)
+create extension if not exists pg_trgm;
+
+-- worker -> API bearer auth. Raw token `cbk_<base64url>`; only the hash is stored.
+create table if not exists api_tokens (
+  id           bigint generated always as identity primary key,
+  user_id      bigint not null references users (id) on delete cascade,
+  name         text not null,
+  token_hash   text not null unique,          -- sha256(raw) hex
+  scopes       text[] not null default '{inbound}',
+  created_at   timestamptz not null default now(),
+  last_used_at timestamptz
+);
+create index if not exists api_tokens_user_idx on api_tokens (user_id);
+
+-- one row per worker submission: dedup key + audit trail + review item.
+create table if not exists inbound_actions (
+  id            bigint generated always as identity primary key,
+  user_id       bigint not null references users (id) on delete cascade,
+  source        text not null,                -- opaque, e.g. 'gmail-worker'
+  external_ref  text not null,                -- opaque dedup key from the worker
+  occurred_at   timestamptz,                  -- when the underlying thing happened
+  summary       text,                         -- human-readable, from the worker
+  payload       jsonb,                        -- full submit body (extracted + thread_key), verbatim
+  match         jsonb,                        -- per-entity candidates + scores (§5)
+  proposal      jsonb,                        -- ordered op list the reviewer edits (§6)
+  status        text not null default 'pending'
+                check (status in ('pending', 'needs_review', 'applied',
+                                  'auto_applied', 'dismissed', 'duplicate', 'error')),
+  applied       jsonb,                        -- per-op results: [{id, op, result_id, created}]
+  error         text,
+  created_at    timestamptz not null default now(),
+  resolved_at   timestamptz,
+  thread_key    text generated always as (payload ->> 'thread_key') stored,
+  unique (user_id, source, external_ref)
+);
+create index if not exists inbound_actions_user_status_idx
+  on inbound_actions (user_id, status, created_at desc);
+create index if not exists inbound_actions_user_thread_idx
+  on inbound_actions (user_id, thread_key);
+
+-- provenance: which submission produced this row. `set null` so the domain row
+-- outlives a deleted inbound_actions row.
+alter table events add column if not exists inbound_action_id
+  bigint references inbound_actions (id) on delete set null;
+alter table applications add column if not exists inbound_action_id
+  bigint references inbound_actions (id) on delete set null;

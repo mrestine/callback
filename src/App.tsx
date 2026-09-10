@@ -1,4 +1,4 @@
-import { NavLink, Navigate, Outlet } from 'react-router-dom'
+import { Link, NavLink, Navigate, Outlet } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { api } from './lib/api'
 import { useMe } from './lib/auth'
@@ -8,6 +8,7 @@ const NAV = [
   { to: '/applications', label: 'Applications', end: false },
   { to: '/companies', label: 'Companies', end: false },
   { to: '/contacts', label: 'Contacts', end: false },
+  { to: '/review', label: 'Review', end: false },
 ]
 
 /** Gates the authenticated area and renders the app chrome. */
@@ -54,6 +55,12 @@ export function RootLayout() {
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm">
+            <Link
+              to="/settings"
+              className="text-gray-500 hover:text-gray-900 dark:text-gray-400 dark:hover:text-gray-100"
+            >
+              Settings
+            </Link>
             {me.avatar_url && <img src={me.avatar_url} alt="" className="h-6 w-6 rounded-full" />}
             <span className="text-gray-600 dark:text-gray-400">{me.name ?? me.login}</span>
             <button

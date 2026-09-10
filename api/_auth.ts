@@ -1,5 +1,6 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import type { VercelRequest, VercelResponse } from '@vercel/node'
+import { sql } from './_db.js'
 
 const SESSION_COOKIE = 'cb_session'
 export const OAUTH_STATE_COOKIE = 'cb_oauth_state'
@@ -112,4 +113,69 @@ export function clearSessionCookie(res: VercelResponse): void {
 
 export function newOAuthState(): string {
   return randomBytes(16).toString('hex')
+}
+
+// --- worker bearer tokens (api_tokens) -----------------------------
+export interface TokenAuth {
+  uid: number
+  scopes: string[]
+}
+
+/** Raw token -> the value stored in `api_tokens.token_hash`. */
+export function hashToken(raw: string): string {
+  return createHash('sha256').update(raw).digest('hex')
+}
+
+/** Mint a new raw token. Shown to the operator once; only its hash is stored. */
+export function newRawToken(): string {
+  return `cbk_${randomBytes(32).toString('base64url')}`
+}
+
+function bearer(req: VercelRequest): string | null {
+  const h = req.headers.authorization
+  if (!h || !h.toLowerCase().startsWith('bearer ')) return null
+  const raw = h.slice(7).trim()
+  return raw.length > 0 ? raw : null
+}
+
+export async function readToken(req: VercelRequest): Promise<TokenAuth | null> {
+  const raw = bearer(req)
+  if (!raw) return null
+  const hash = hashToken(raw)
+  const rows = await sql`
+    update api_tokens set last_used_at = now()
+    where token_hash = ${hash}
+    returning user_id, scopes
+  `
+  if (rows.length === 0) return null
+  return { uid: Number(rows[0].user_id), scopes: (rows[0].scopes as string[]) ?? [] }
+}
+
+/**
+ * Bearer-token auth for the ingestion worker. Sends 401 and returns null on a
+ * missing / unknown token. Mirror of `requireAuth` for the cookie session.
+ */
+export async function requireToken(req: VercelRequest, res: VercelResponse): Promise<TokenAuth | null> {
+  const t = await readToken(req)
+  if (!t) {
+    res.status(401).json({ error: 'invalid or missing bearer token' })
+    return null
+  }
+  return t
+}
+
+/**
+ * Accepts either a worker bearer token or a browser session cookie. Used by
+ * `/api/inbound/resolve` (the worker fills disambiguation; a human approves).
+ */
+export async function requireTokenOrAuth(
+  req: VercelRequest,
+  res: VercelResponse,
+): Promise<{ uid: number } | null> {
+  const t = await readToken(req)
+  if (t) return { uid: t.uid }
+  const user = readSession(req)
+  if (user) return { uid: user.uid }
+  res.status(401).json({ error: 'unauthenticated' })
+  return null
 }

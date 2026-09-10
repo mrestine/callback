@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import type {
+  ApiToken,
   Application,
   ApplicationDetail,
   ApplicationStatus,
@@ -12,6 +13,9 @@ import type {
   DashboardData,
   EventRow,
   EventStatus,
+  InboundDetail,
+  InboundRow,
+  NewApiToken,
   RemoteMode,
   Warmth,
 } from './types'
@@ -280,5 +284,82 @@ export function useDashboard() {
   return useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get<DashboardData>('/api/dashboard'),
+  })
+}
+
+// --- Phase 2: AI inbound review ----------------------------------
+/** Per-op override sent to POST /api/inbound/resolve. */
+export interface OpOverride {
+  decision?: 'accept' | 'skip'
+  chosen?: number | null
+  args?: Record<string, unknown>
+  op?: string
+}
+export type ResolveBody =
+  | { action: 'apply'; ops: Record<string, OpOverride> }
+  | { action: 'dismiss' }
+  | { action: 'choose'; choice: Record<string, number> }
+
+export function useReviewQueue() {
+  return useQuery({
+    queryKey: ['inbound', 'queue'],
+    queryFn: () => api.get<InboundRow[]>('/api/inbound?status=needs_review'),
+    refetchInterval: 60_000,
+  })
+}
+
+export function useInboundHistory() {
+  return useQuery({
+    queryKey: ['inbound', 'history'],
+    queryFn: () => api.get<InboundRow[]>('/api/inbound?limit=200'),
+  })
+}
+
+export function useInboundAction(id: number) {
+  return useQuery({
+    queryKey: ['inbound', id],
+    queryFn: () => api.get<InboundDetail>(`/api/inbound?id=${id}`),
+  })
+}
+
+export function useResolveInbound() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, body }: { id: number; body: ResolveBody }) =>
+      api.post<{ status: string; applied?: unknown }>(`/api/inbound/resolve?id=${id}`, body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['inbound'] })
+      // an apply may have written companies / contacts / applications / events
+      qc.invalidateQueries({ queryKey: ['applications'] })
+      qc.invalidateQueries({ queryKey: ['companies'] })
+      qc.invalidateQueries({ queryKey: ['contacts'] })
+      qc.invalidateQueries({ queryKey: ['company'] })
+      qc.invalidateQueries({ queryKey: ['contact'] })
+      qc.invalidateQueries({ queryKey: ['dashboard'] })
+    },
+  })
+}
+
+// --- Phase 2: worker API tokens (Settings) --------------------
+export function useTokens() {
+  return useQuery({
+    queryKey: ['tokens'],
+    queryFn: () => api.get<ApiToken[]>('/api/tokens'),
+  })
+}
+
+export function useCreateToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.post<NewApiToken>('/api/tokens', { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tokens'] }),
+  })
+}
+
+export function useDeleteToken() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.del<void>(`/api/tokens?id=${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['tokens'] }),
   })
 }

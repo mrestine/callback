@@ -10,7 +10,8 @@
     "typecheck": "tsc -b --noEmit",
     "db:apply": "tsx scripts/apply-schema.ts",
     "test:session": "tsx scripts/test-session.ts",
-    "test:reset": "tsx scripts/test-reset.ts"
+    "test:reset": "tsx scripts/test-reset.ts",
+    "test:inbound": "tsx scripts/test-inbound.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

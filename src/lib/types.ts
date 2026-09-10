@@ -4,6 +4,9 @@ import type {
   REMOTE_MODES,
   WARMTH_LEVELS,
 } from '../schemas'
+import type { MatchCandidate, ProposalOp } from '../schemas'
+
+export type { MatchCandidate, ProposalOp }
 
 export type ContactKind = (typeof CONTACT_KINDS)[number]
 export type Warmth = (typeof WARMTH_LEVELS)[number]
@@ -145,4 +148,59 @@ export interface DashboardData {
   stale: StaleApplication[]
   upcoming: UpcomingEvent[]
   recent: ActivityItem[]
+}
+
+// --- Phase 2 — AI inbound review ------------------------------------
+export type InboundStatus =
+  | 'pending'
+  | 'needs_review'
+  | 'applied'
+  | 'auto_applied'
+  | 'dismissed'
+  | 'duplicate'
+  | 'error'
+
+/** the worker's extracted structure — callback treats it as opaque display data */
+export interface InboundExtracted {
+  job_related: boolean
+  email_kind: string
+  sender: { name: string | null; email: string | null; org: string | null; is_agency_recruiter: boolean; kind: string }
+  hiring_company: { name: string | null; withheld: boolean }
+  role: { title: string | null }
+  event: { type: string | null; subtype: string | null; occurred_at: string | null; summary: string | null }
+  status_signal: string | null
+  notes: string | null
+}
+
+/** row from GET /api/inbound (list) */
+export interface InboundRow {
+  id: number
+  source: string
+  external_ref: string
+  occurred_at: string | null
+  summary: string | null
+  status: InboundStatus
+  email_kind: string | null
+  match: unknown
+  proposal: ProposalOp[] | null
+  applied: { id: string; op: string; result_id: number | null; created: boolean }[] | null
+  error: string | null
+  created_at: string
+  resolved_at: string | null
+}
+
+/** row from GET /api/inbound?id= (full) */
+export interface InboundDetail extends InboundRow {
+  payload: { external_ref: string; source: string; thread_key: string | null; summary: string | null; occurred_at: string | null; extracted: InboundExtracted } | null
+}
+
+export interface ApiToken {
+  id: number
+  name: string
+  scopes: string[]
+  created_at: string
+  last_used_at: string | null
+}
+export interface NewApiToken extends ApiToken {
+  token: string
 }

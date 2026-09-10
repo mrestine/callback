@@ -12,6 +12,9 @@ import { Contacts } from './routes/Contacts'
 import { ContactDetail } from './routes/ContactDetail'
 import { Applications } from './routes/Applications'
 import { ApplicationDetail } from './routes/ApplicationDetail'
+import { Review } from './routes/Review'
+import { ReviewDetail } from './routes/ReviewDetail'
+import { Settings } from './routes/Settings'
 import './index.css'
 
 const router = createBrowserRouter([
@@ -27,6 +30,9 @@ const router = createBrowserRouter([
       { path: 'contacts/:id', element: <ContactDetail /> },
       { path: 'applications', element: <Applications /> },
       { path: 'applications/:id', element: <ApplicationDetail /> },
+      { path: 'review', element: <Review /> },
+      { path: 'review/:id', element: <ReviewDetail /> },
+      { path: 'settings', element: <Settings /> },
     ],
   },
 ])

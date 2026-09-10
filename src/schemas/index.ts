@@ -137,3 +137,6 @@ export type CompanyCreate = z.infer<typeof companyCreate>
 export type ContactCreate = z.infer<typeof contactCreate>
 export type ApplicationCreate = z.infer<typeof applicationCreate>
 export type EventCreate = z.infer<typeof eventCreate>
+
+// --- Phase 2 — AI inbound ingestion ----------------------------------
+export * from './inbound.js'

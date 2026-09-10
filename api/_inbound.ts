@@ -1,0 +1,500 @@
+/**
+ * Phase 2 — the matching / proposal / apply logic behind /api/inbound.
+ *
+ * `callback` never models email. Input here is the worker's extracted structure
+ * (`Extracted`); output is a `proposal` — an ordered list of typed ops the
+ * operator approves in the review UI. Nothing in this file writes domain data
+ * until `applyProposal` runs, and that runs as one atomic statement.
+ */
+import { sql } from './_db.js'
+import type {
+  Extracted,
+  MatchCandidate,
+  ProposalOp,
+} from '../src/schemas/index.js'
+import { APPLICATION_STATUSES } from '../src/schemas/index.js'
+
+type Status = (typeof APPLICATION_STATUSES)[number]
+const INACTIVE: Status[] = ['rejected', 'withdrawn', 'ghosted']
+
+export interface EntityMatch {
+  chosen: number | null
+  candidates: MatchCandidate[]
+}
+export interface MatchResult {
+  contact: EntityMatch
+  company: EntityMatch
+  application: EntityMatch
+}
+
+const empty = (): EntityMatch => ({ chosen: null, candidates: [] })
+const clean = (s: string | null | undefined) => (s ?? '').trim()
+
+// --------------------------------------------------------------------------
+// 5. Match  (deterministic + SQL, no model)
+// --------------------------------------------------------------------------
+export async function matchEntities(
+  uid: number,
+  ex: Extracted,
+  threadKey: string | null,
+): Promise<MatchResult> {
+  const senderEmail = clean(ex.sender?.email).toLowerCase()
+  const senderName = clean(ex.sender?.name)
+  const companyName = clean(ex.hiring_company?.name)
+  const roleTitle = clean(ex.role?.title)
+  const withheld = ex.hiring_company?.withheld === true
+  const agency = ex.sender?.is_agency_recruiter === true
+
+  const contact = await matchContact(uid, senderEmail, senderName)
+  const company =
+    agency || withheld || !companyName ? empty() : await matchCompany(uid, companyName)
+
+  // thread continuity: reuse the application a prior message in this thread resolved to
+  let threadPriorApp: number | null = null
+  if (threadKey) {
+    const prior = await sql`
+      select applied from inbound_actions
+      where user_id = ${uid} and thread_key = ${threadKey}
+        and status = 'applied' and applied is not null
+      order by created_at desc
+      limit 5
+    `
+    for (const row of prior) {
+      const apps = (row.applied as { op?: string; result_id?: number }[] | null) ?? []
+      const hit = apps.find((a) => a.op?.includes('application') && a.result_id)
+      if (hit?.result_id) {
+        const [live] = await sql`
+          select id, company_id from applications where id = ${hit.result_id} and user_id = ${uid}
+        `
+        if (live) {
+          threadPriorApp = Number(live.id)
+          if (company.chosen == null && live.company_id) company.chosen = Number(live.company_id)
+          break
+        }
+      }
+    }
+  }
+
+  const application =
+    agency || withheld || (!companyName && threadPriorApp == null)
+      ? empty()
+      : await matchApplication(uid, roleTitle, company.chosen, threadPriorApp)
+
+  return { contact, company, application }
+}
+
+async function matchContact(
+  uid: number,
+  email: string,
+  name: string,
+): Promise<EntityMatch> {
+  if (!email && !name) return empty()
+  const rows = await sql`
+    select id, name, email,
+      case when ${email} <> '' and lower(email) = ${email} then 1.0
+           else similarity(name, ${name}) end as score
+    from contacts
+    where user_id = ${uid}
+      and ( (${email} <> '' and lower(email) = ${email})
+            or (${name} <> '' and similarity(name, ${name}) > 0.35) )
+    order by score desc
+    limit 5
+  `
+  const candidates: MatchCandidate[] = rows.map((r) => ({
+    id: Number(r.id),
+    label: r.email ? `${r.name} <${r.email}>` : String(r.name),
+    score: Number(r.score),
+  }))
+  const exact = rows.find((r) => email && String(r.email ?? '').toLowerCase() === email)
+  return { chosen: exact ? Number(exact.id) : null, candidates }
+}
+
+async function matchCompany(uid: number, name: string): Promise<EntityMatch> {
+  const rows = await sql`
+    select id, name, similarity(name, ${name}) as score
+    from companies
+    where user_id = ${uid}
+      and (name ilike ${'%' + name + '%'} or similarity(name, ${name}) > 0.3)
+    order by score desc
+    limit 5
+  `
+  const candidates: MatchCandidate[] = rows.map((r) => ({
+    id: Number(r.id),
+    label: String(r.name),
+    score: Number(r.score),
+  }))
+  const top = rows[0]
+  const confident =
+    top && (String(top.name).toLowerCase() === name.toLowerCase() || Number(top.score) >= 0.6)
+  return { chosen: confident ? Number(top.id) : null, candidates }
+}
+
+async function matchApplication(
+  uid: number,
+  role: string,
+  companyId: number | null,
+  threadPriorApp: number | null,
+): Promise<EntityMatch> {
+  const rows = await sql`
+    select a.id, a.role_title, a.status, a.company_id,
+      similarity(a.role_title, ${role}) as score
+    from applications a
+    where a.user_id = ${uid}
+      and (${companyId}::bigint is null or a.company_id = ${companyId})
+      and a.status <> all(${INACTIVE})
+    order by score desc, a.created_at desc
+    limit 5
+  `
+  const candidates: MatchCandidate[] = rows.map((r) => ({
+    id: Number(r.id),
+    label: `${r.role_title} · ${r.status}`,
+    score: Number(r.score),
+  }))
+  if (threadPriorApp) return { chosen: threadPriorApp, candidates }
+  const activeAtCompany = companyId != null && rows.length === 1
+  const strong = rows[0] && Number(rows[0].score) >= 0.55
+  return { chosen: activeAtCompany || strong ? Number(rows[0].id) : null, candidates }
+}
+
+// --------------------------------------------------------------------------
+// 6. Propose  (rules over match + email_kind; builds ops, writes nothing)
+// --------------------------------------------------------------------------
+const NO_REPLY = /(^|[._-])(no-?reply|donotreply|notifications?)@/i
+
+const initialStatus = (kind: string, signal: string | null): Status => {
+  if (signal && (APPLICATION_STATUSES as readonly string[]).includes(signal)) return signal as Status
+  switch (kind) {
+    case 'application_confirmation':
+      return 'applied'
+    case 'interview_invite':
+    case 'interview_scheduled':
+    case 'assessment_invite':
+      return 'screen'
+    case 'offer':
+      return 'offer'
+    case 'rejection':
+      return 'rejected'
+    default:
+      return 'lead'
+  }
+}
+
+const eventTypeFor = (kind: string): string => {
+  if (kind === 'interview_invite' || kind === 'interview_scheduled') return 'interview'
+  if (kind === 'application_confirmation') return 'applied'
+  return 'email'
+}
+
+/** kinds where an untracked application should be offered as a create op */
+const WANTS_APPLICATION = new Set([
+  'application_confirmation',
+  'interview_invite',
+  'interview_scheduled',
+  'offer',
+  'rejection',
+  'assessment_invite',
+])
+
+export interface ProposalResult {
+  status: 'needs_review' | 'dismissed'
+  ops: ProposalOp[]
+}
+
+export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
+  if (!ex.job_related || ex.email_kind === 'noise') return { status: 'dismissed', ops: [] }
+
+  const kind = ex.email_kind
+  const agency = ex.sender?.is_agency_recruiter === true
+  const withheld = ex.hiring_company?.withheld === true
+  const companyName = clean(ex.hiring_company?.name)
+  const companyKnown = !agency && !withheld && !!companyName
+
+  const ops: ProposalOp[] = []
+
+  // --- company -------------------------------------------------------
+  let companyRef: string | null = null
+  if (companyKnown) {
+    companyRef = '$c1'
+    if (match.company.chosen != null || match.company.candidates.length > 0) {
+      ops.push({
+        id: 'c1',
+        op: 'link_company',
+        match: match.company,
+        decision: 'accept',
+        reason: match.company.chosen == null ? 'pick the company or switch to create' : undefined,
+      })
+    } else {
+      ops.push({
+        id: 'c1',
+        op: 'create_company',
+        args: { name: companyName },
+        decision: 'accept',
+        reason: 'no company on file with this name',
+      })
+    }
+  }
+
+  // --- application -------------------------------------------------
+  let appRef: string | null = null
+  if (companyKnown || match.application.chosen != null) {
+    appRef = '$a1'
+    if (match.application.chosen != null || match.application.candidates.length > 0) {
+      ops.push({
+        id: 'a1',
+        op: 'link_application',
+        refs: companyRef ? { company_id: companyRef } : undefined,
+        match: match.application,
+        decision: 'accept',
+        reason:
+          match.application.chosen == null ? 'pick the application or switch to create' : undefined,
+      })
+    } else if (WANTS_APPLICATION.has(kind)) {
+      ops.push({
+        id: 'a1',
+        op: 'create_application',
+        args: {
+          role_title: clean(ex.role?.title) || '(role not stated)',
+          status: initialStatus(kind, ex.status_signal),
+        },
+        refs: companyRef ? { company_id: companyRef } : undefined,
+        decision: 'accept',
+        reason: 'no matching application — will create one',
+      })
+    } else {
+      // recruiter_outreach / status_update etc. with a named company but no app:
+      // offer a create, but skipped by default (event lands on the contact)
+      ops.push({
+        id: 'a1',
+        op: 'create_application',
+        args: { role_title: clean(ex.role?.title) || '(role not stated)', status: 'lead' },
+        refs: companyRef ? { company_id: companyRef } : undefined,
+        decision: 'skip',
+        reason: 'optional — only if you want to track this as an application',
+      })
+      appRef = null
+    }
+  }
+
+  // --- contact --------------------------------------------------
+  let contactRef: string | null = null
+  const senderEmail = clean(ex.sender?.email)
+  const senderName = clean(ex.sender?.name)
+  if (senderEmail || senderName) {
+    contactRef = '$ct1'
+    if (match.contact.chosen != null || match.contact.candidates.length > 0) {
+      ops.push({
+        id: 'ct1',
+        op: 'link_contact',
+        match: match.contact,
+        decision: 'accept',
+        reason: match.contact.chosen == null ? 'pick the contact or switch to create' : undefined,
+      })
+    } else {
+      const noReply = NO_REPLY.test(senderEmail)
+      ops.push({
+        id: 'ct1',
+        op: 'create_contact',
+        args: {
+          name: senderName || senderEmail || 'Unknown sender',
+          email: senderEmail || null,
+          kind: agency ? 'recruiter' : String(ex.sender?.kind ?? 'other'),
+          role: agency ? `Recruiter - ${clean(ex.sender?.org) || 'agency'}` : null,
+        },
+        refs: companyKnown && !agency && companyRef ? { company_id: companyRef } : undefined,
+        decision: noReply ? 'skip' : 'accept',
+        reason: noReply ? 'no-reply address — usually not worth a contact' : undefined,
+      })
+    }
+  }
+
+  // --- event -----------------------------------------------------
+  const eventRefs: Record<string, string> = {}
+  if (appRef) eventRefs.application_id = appRef
+  if (contactRef) eventRefs.contact_id = contactRef
+  if (Object.keys(eventRefs).length > 0) {
+    ops.push({
+      id: 'e1',
+      op: 'add_event',
+      args: {
+        type: eventTypeFor(kind),
+        subtype: clean(ex.event?.subtype) || null,
+        body: clean(ex.event?.summary) || clean(ex.notes) || null,
+        occurred_at: clean(ex.event?.occurred_at) || null,
+      },
+      refs: eventRefs,
+      decision: 'accept',
+    })
+  }
+
+  // --- status change (only against an existing, linked application) --
+  const linkedApp = ops.find((o) => o.id === 'a1' && o.op === 'link_application')
+  if (linkedApp && appRef && ['rejection', 'offer', 'interview_invite', 'interview_scheduled', 'assessment_invite'].includes(kind)) {
+    ops.push({
+      id: 's1',
+      op: 'set_status',
+      args: { status: initialStatus(kind, ex.status_signal) },
+      refs: { application_id: appRef },
+      decision: 'accept',
+    })
+  }
+
+  return { status: 'needs_review', ops }
+}
+
+/** true if any un-skipped link op still needs the reviewer to pick a candidate */
+export function needsDisambiguation(ops: ProposalOp[]): boolean {
+  return ops.some(
+    (o) =>
+      o.decision !== 'skip' &&
+      o.op.startsWith('link_') &&
+      (o.match?.chosen == null) &&
+      (o.match?.candidates.length ?? 0) > 0,
+  )
+}
+
+// --------------------------------------------------------------------------
+// 7. Apply  (one atomic statement: WITH <op ctes>, _ia update RETURNING ids)
+// --------------------------------------------------------------------------
+const statusForDate = (d: Date | null): 'scheduled' | 'logged' =>
+  d && d.getTime() > Date.now() ? 'scheduled' : 'logged'
+
+interface ApplyCtx {
+  uid: number
+  inboundActionId: number
+  fallbackOccurredAt: Date | null
+}
+export interface ApplyPlan {
+  text: string
+  params: unknown[]
+  /** op id -> the `select` column alias that returns its new row id */
+  resultAliases: Record<string, string>
+}
+
+export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { error: string } {
+  const live = ops.filter((o) => o.decision !== 'skip')
+  const params: unknown[] = []
+  const p = (v: unknown) => {
+    params.push(v)
+    return `$${params.length}`
+  }
+
+  // resolve each op to a literal id or a CTE alias
+  type Resolved = { kind: 'lit'; expr: string } | { kind: 'cte'; alias: string }
+  const resolved = new Map<string, Resolved>()
+  for (const op of live) {
+    if (op.op === 'link_company' || op.op === 'link_application' || op.op === 'link_contact') {
+      if (op.match?.chosen == null) return { error: `op ${op.id} (${op.op}) has no chosen row` }
+      resolved.set(op.id, { kind: 'lit', expr: p(op.match.chosen) })
+    } else if (op.op !== 'add_event' && op.op !== 'set_status') {
+      resolved.set(op.id, { kind: 'cte', alias: `op_${op.id}` })
+    }
+  }
+
+  /** a ref value ("$c1") -> SQL expression, or null if it points at a skipped op */
+  const refExpr = (ref: string | undefined): string | null => {
+    if (!ref) return null
+    const target = ref.replace(/^\$/, '')
+    const r = resolved.get(target)
+    if (!r) return null
+    return r.kind === 'lit' ? r.expr : `(select id from ${r.alias})`
+  }
+
+  const ctes: string[] = []
+  const selects: string[] = []
+  const resultAliases: Record<string, string> = {}
+  const iaId = p(ctx.inboundActionId)
+  const uid = p(ctx.uid)
+  const iaRef = `${iaId}` // reused below
+
+  for (const op of live) {
+    const A = (a: string) => (op.args?.[a] ?? null) as unknown
+    switch (op.op) {
+      case 'create_company': {
+        const name = clean(A('name') as string)
+        if (!name) return { error: 'create_company needs a name' }
+        ctes.push(
+          `op_${op.id} as (insert into companies (user_id, name) values (${uid}, ${p(name)}) returning id)`,
+        )
+        selects.push(`(select id from op_${op.id}) as op_${op.id}`)
+        resultAliases[op.id] = `op_${op.id}`
+        break
+      }
+      case 'create_contact': {
+        const companyExpr = refExpr(op.refs?.company_id)
+        const name = clean(A('name') as string) || 'Unknown sender'
+        ctes.push(
+          `op_${op.id} as (insert into contacts (user_id, company_id, name, email, kind, role) ` +
+            `values (${uid}, ${companyExpr ?? 'null'}, ${p(name)}, ${p(A('email'))}, ` +
+            `coalesce(${p(A('kind'))}, 'other'), ${p(A('role'))}) returning id)`,
+        )
+        selects.push(`(select id from op_${op.id}) as op_${op.id}`)
+        resultAliases[op.id] = `op_${op.id}`
+        break
+      }
+      case 'create_application': {
+        const companyExpr = refExpr(op.refs?.company_id)
+        if (!companyExpr) return { error: 'create_application needs a company' }
+        const role = clean(A('role_title') as string) || '(role not stated)'
+        const st = (A('status') as string) || 'lead'
+        ctes.push(
+          `op_${op.id} as (insert into applications (user_id, company_id, role_title, status, source, inbound_action_id) ` +
+            `values (${uid}, ${companyExpr}, ${p(role)}, ${p(st)}, 'ai', ${iaRef}) returning id)`,
+        )
+        selects.push(`(select id from op_${op.id}) as op_${op.id}`)
+        resultAliases[op.id] = `op_${op.id}`
+        break
+      }
+      case 'add_event': {
+        const appExpr = refExpr(op.refs?.application_id)
+        const ctExpr = refExpr(op.refs?.contact_id)
+        if (!appExpr && !ctExpr) break // nothing to attach it to
+        const rawWhen = clean(A('occurred_at') as string)
+        const when = rawWhen ? new Date(rawWhen) : ctx.fallbackOccurredAt
+        const whenValid = when && !Number.isNaN(when.getTime()) ? when : ctx.fallbackOccurredAt
+        ctes.push(
+          `op_${op.id} as (insert into events ` +
+            `(user_id, application_id, contact_id, type, subtype, body, occurred_at, status, source, inbound_action_id) ` +
+            `values (${uid}, ${appExpr ?? 'null'}, ${ctExpr ?? 'null'}, ` +
+            `coalesce(${p(A('type'))}, 'email'), ${p(A('subtype'))}, ${p(A('body'))}, ` +
+            `coalesce(${p(whenValid)}::timestamptz, now()), ` +
+            `${p(whenValid ? statusForDate(whenValid) : 'logged')}, 'ai', ${iaRef}) returning id)`,
+        )
+        selects.push(`(select id from op_${op.id}) as op_${op.id}`)
+        resultAliases[op.id] = `op_${op.id}`
+        break
+      }
+      case 'set_status': {
+        const appExpr = refExpr(op.refs?.application_id)
+        if (!appExpr) break
+        const st = A('status') as string
+        if (!st) return { error: 'set_status needs a status' }
+        ctes.push(
+          `old_${op.id} as (select status from applications where id = ${appExpr} and user_id = ${uid})`,
+        )
+        ctes.push(
+          `op_${op.id} as (update applications set status = ${p(st)}, updated_at = now() ` +
+            `where id = ${appExpr} and user_id = ${uid} returning id)`,
+        )
+        ctes.push(
+          `evt_${op.id} as (insert into events ` +
+            `(user_id, application_id, type, old_status, new_status, source, inbound_action_id) ` +
+            `select ${uid}, ${appExpr}, 'status_change', (select status from old_${op.id}), ${p(st)}, 'ai', ${iaRef} ` +
+            `where (select status from old_${op.id}) is distinct from ${p(st)} returning id)`,
+        )
+        selects.push(`(select id from op_${op.id}) as op_${op.id}`)
+        resultAliases[op.id] = `op_${op.id}`
+        break
+      }
+      // link_* ops contribute no SQL — already resolved to a literal id
+    }
+  }
+
+  ctes.push(
+    `_ia as (update inbound_actions set status = 'applied', resolved_at = now() ` +
+      `where id = ${iaRef} and user_id = ${uid} and status = 'needs_review' returning id)`,
+  )
+  selects.push(`(select id from _ia) as ia_id`)
+
+  const text = `with ${ctes.join(',\n')}\nselect ${selects.join(', ')}`
+  return { text, params, resultAliases }
+}
