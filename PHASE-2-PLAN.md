@@ -2,8 +2,15 @@
 
 **Goal.** Forward job-search emails to a dedicated Gmail; a local worker (next to
 Ollama, on the idle 3070 box) reads them, a small model extracts structured
-fields, and the `callback` API matches them to existing companies / contacts /
-applications and either acts or queues the email for human review.
+fields, and the worker submits those to `callback`, which matches them to
+existing companies / contacts / applications and either acts or queues a review
+item.
+
+**`callback` doesn't know about email.** It exposes one generic endpoint
+(`/api/inbound`) that takes an extracted structure + an opaque `external_ref`
+for idempotency. Everything email-shaped — Gmail, forwards, subjects, message
+ids, processing state — lives in the worker and in Gmail labels. `callback`
+just sees "a suggested change from the ingestion worker."
 
 **Constraints.**
 - $0: the always-on model is local Ollama. No hosted-API dependency in the
@@ -39,32 +46,36 @@ point of contact. Consequences:
 |---|---|---|
 | Where | Vercel + Neon (built, Phase 1) | operator's desktop, beside Ollama |
 | Public / always-on | yes | no — GPU box, may be asleep |
-| Datastore | Neon Postgres (domain data + `ingested_emails`) | **local SQLite** — Gmail cursor + outbox only |
+| Datastore | Neon Postgres | **none** — Gmail labels are the state; one OAuth token file |
+| Knows about email | **no** | yes — the only thing that does |
 | Talks to models | **never** | the only thing that calls Ollama |
-| Role | CRUD, matching, decision rules, review UI | poll → clean → extract → submit → (disambiguate) |
-| New in P2 | `/api/ingest*`, `/api/tokens`, review UI, 3 schema additions | entire repo |
+| Role | matching, decision rules, review UI over `inbound_actions` | poll → clean → extract → submit → (disambiguate) |
+| New in P2 | `/api/inbound*`, `/api/tokens`, review UI; `inbound_actions` + `api_tokens` tables + `events.inbound_action_id` | entire repo |
 
 ### Service boundary
 
-- **No shared database.** Neither service holds the other's DB connection string
-  in its env. `callback` has `DATABASE_URL`; the worker has a local SQLite path.
-  That's it.
+- **No shared database, and `callback` has no email concepts.** `callback` has
+  `DATABASE_URL`; the worker has no database at all (see Deployment). The
+  `/api/inbound` payload is an extracted structure + an opaque `external_ref` —
+  no `from_email`, `subject`, or `message_id` columns on the `callback` side.
 - **HTTP only, one direction.** The worker makes outbound calls to
   `CALLBACK_API_URL`; `callback` never calls the worker. The worker can sit
   behind NAT on any network.
 - **One bearer token is the entire trust relationship.** `callback` issues it
   (`/api/tokens`), the worker presents it. Revoking it fully severs the worker.
 - **The worker never reads `callback`'s data.** Matching runs server-side inside
-  `/api/ingest`; disambiguation candidates come back in that call's *response*,
+  `/api/inbound`; disambiguation candidates come back in that call's *response*,
   not from a query. There are no read endpoints for the worker.
-- **The worker never writes a queue row directly.** It `POST`s `/api/ingest`;
-  `callback`'s handler inserts `ingested_emails`.
+- **Idempotency, not a queue.** The worker `POST`s `/api/inbound`; `callback`
+  dedups on `unique(user_id, source, external_ref)` and inserts one
+  `inbound_actions` row. A retry (lost response, worker restart) is a safe
+  no-op.
 - Publishing story: point the worker at any `callback` instance with a URL + a
-  token. No database to provision for the worker beyond a local file.
+  token. Nothing to provision for the worker but a Gmail OAuth token.
 
-The worker is thin glue: poll → clean → one model call → `POST /api/ingest` →
-act on the response → label the message. Everything that needs to know the
-operator's data lives in `callback`.
+The worker is thin glue: poll → clean → one model call → `POST /api/inbound` →
+relabel the message. Everything that needs the operator's data lives in
+`callback`; everything email-shaped lives in the worker + Gmail.
 
 ### Deployment — operator's desktop (Docker Desktop, Windows, RTX 3070)
 
@@ -78,10 +89,11 @@ Two containers, managed **separately**:
   only. Reaches Ollama at **`OLLAMA_URL=http://host.docker.internal:11434`**
   (Docker Desktop provides `host.docker.internal`; `network_mode: host` does not
   work there). No published ports — outbound only (`host.docker.internal` for the
-  model, HTTPS to `CALLBACK_API_URL` for everything else). Volumes: a named
-  `data` volume (SQLite: cursor + outbox), and — for tuning — bind mounts of
-  `./fixtures` and `./prompts` so `.eml`s and prompt edits take effect without a
-  rebuild.
+  model, HTTPS to `CALLBACK_API_URL` for everything else). Volumes: `./secrets`
+  (the Gmail OAuth token), and — for tuning — bind mounts of `./fixtures` and
+  `./prompts` so `.eml`s and prompt edits take effect without a rebuild. **No
+  database volume** — the worker keeps no state; Gmail labels are the state
+  machine (§1, §8).
 
 `docker compose up --build -d` then `docker compose logs -f worker`. Run the
 tuning CLIs in the container: `docker exec callback-worker node dist/cli/batch.js fixtures/private`.
@@ -93,15 +105,22 @@ host and uses `docker exec`.
 
 ## Pipeline
 
-### 1. Poll  *(worker, deterministic)*
-- Gmail API, OAuth **desktop** credentials (one-time consent), token cached
-  locally. Scope `gmail.modify` (read + label).
-- Query: `label:callback/inbox -label:callback/processed`, resumed from the
-  `historyId` cursor in local SQLite.
-- Skip any message id already in the local `seen` set. `callback`'s
-  `unique(user_id, source, source_message_id)` is the authoritative dedup; this
-  is just a fast local pre-filter (the worker has no access to `callback`'s DB).
-- Fetch full message (`users.messages.get?format=full`).
+### 1. Poll  *(worker, deterministic — Gmail labels are the state machine)*
+- Gmail API, OAuth **desktop** credentials (one-time consent), token cached in
+  `./secrets`. Scope `gmail.modify` (read + label).
+- State via labels: `callback/inbox` → `callback/processing` →
+  `callback/processed` | `callback/error`. (`callback/inbox` is applied by the
+  operator's forwarding filter, §Intake.)
+- Poll query: `label:callback/inbox -label:callback/processing
+  -label:callback/processed -label:callback/error`. Low volume (a few forwards a
+  day), so no `historyId` cursor and **no local store** — the query returns
+  exactly what's outstanding.
+- **Recovery:** also pick up anything stuck in `callback/processing` (a crash or
+  lost response mid-flight) and re-run it. The re-submit is idempotent on
+  `callback` via `external_ref` (the Gmail message id), so a double-send is a
+  no-op.
+- Fetch each message `users.messages.get?format=raw`, label it
+  `callback/processing`.
 
 ### 2. Clean / normalise  *(worker, deterministic — no model)*
 - Parse MIME. Prefer `text/plain`; fall back to `text/html` → strip tags.
@@ -193,43 +212,42 @@ Encoded in three places:
    `"Recruiter - " + sender.org`, not by the model.
 
 ### 4. Submit  *(worker → API)*
-`POST /api/ingest`, `Authorization: Bearer <service token>` → resolves to a
-`user_id`.
+`POST /api/inbound`, `Authorization: Bearer <service token>` → resolves to a
+`user_id`. The body is deliberately generic — `callback` never learns this is an
+email:
 
 ```jsonc
 {
-  "source_message_id": "<gmail id of the FORWARD>",
-  "received_at": "<orig_date parsed from the forward block>",
-  "from_email": "dana@stripe.com", "from_name": "Dana Alvarez",  // the ORIGINAL sender
-  "to_email": "operator@personal.gmail.com",                     // the ORIGINAL recipient
-  "subject": "<orig_subject>",
-  "raw_excerpt": "first ~500 chars of cleaned body",   // for the review UI
-  "extracted": { ...the §3 JSON verbatim... }
+  "external_ref": "<gmail message id>",   // opaque idempotency key
+  "source": "gmail-worker",
+  "occurred_at": "<orig_date, ISO>",      // when the underlying thing happened
+  "summary": "Recruiter Dana Alvarez wrote about a Backend Engineer role at Stripe",
+  "thread_key": "dana@stripe.com|backend engineer at stripe",   // continuity hint (§5)
+  "extracted": { ...the §3 JSON verbatim... }   // incl. sender.email for contact matching
 }
 ```
 
-No `thread_id` — forwards don't share threads (see §5).
+The worker builds `summary` from the model's `notes`; `thread_key` is
+`extracted.sender.email` + `extracted.hiring_company.name`/subject, ws-collapsed
+and lowercased. No `from_email` / `subject` / `raw_excerpt` as named fields — the
+review UI renders `summary` + `extracted`.
 
 ### 5. Match  *(API, deterministic + SQL — no model)*
-1. **Dedup**: `ingested_emails` unique on `(user_id, source, source_message_id)`
-   → re-POST returns the existing row, no-op.
-2. **Contact**: exact `sender.email` match (strong) → else trigram name match
-   scoped to a matched company (weak) → else none.
+1. **Dedup**: `inbound_actions` unique on `(user_id, source, external_ref)` →
+   re-POST returns the existing row, no-op.
+2. **Contact**: exact `extracted.sender.email` vs `contacts.email` (strong) →
+   else trigram name match scoped to a matched company (weak) → else none.
 3. **Hiring company**: only from `extracted.hiring_company` (never `sender.org`,
-   never an agency). `from_email` domain vs `companies.email_domains` (strong,
-   only meaningful for in-house senders) → else trigram
-   `hiring_company.name` vs `companies.name` → else via the matched contact's
-   `company_id` (in-house contacts only; agency contacts have none). If
-   `hiring_company.withheld` / null → no company match, and that's expected.
+   never an agency). Trigram `hiring_company.name` vs `companies.name` → else via
+   the matched contact's `company_id` (in-house contacts only). If
+   `hiring_company.withheld` / null → no company match, expected.
 4. **Application**: among the matched company's applications, trigram
    `extracted.role.title`; a single *active* application at that company is a
-   strong hint. **Conversation continuity** (forwards don't share a Gmail
-   thread, so we synthesise one): the worker computes `thread_key` =
-   lowercased `orig_from.email` + `orig_subject` with `re:`/`fwd:` and extra
-   whitespace stripped. If a prior `ingested_emails` row has the same
-   `thread_key` and was linked to an application, reuse that link — this is the
-   strongest available signal. Same `thread_key` + same `orig_date` also flags a
-   likely **double-forward** → `duplicate`.
+   strong hint. **Conversation continuity:** if a prior `inbound_actions` row
+   with the same `thread_key` resolved to an application, reuse that link — the
+   strongest signal, and it's what makes a mis-classified 2nd/3rd email in a
+   thread harmless (the contact/app link is already set). Same `thread_key` +
+   same `occurred_at` also flags a likely double-send → `duplicate`.
 5. Emit `{ contact_id?, company_id?, application_id?, match_confidence:
    high|medium|low, candidates: [...], ambiguities: [...] }`.
 
@@ -253,11 +271,11 @@ No `thread_id` — forwards don't share threads (see §5).
 - high match + single application + actionable kind → auto-apply (table below).
 - medium/low, or >1 candidate, or a consequential change → `needs_review`.
 - no application match + `job_related` → `needs_review`.
-- `noise` / `!job_related` → mark processed, do nothing (still logged).
+- `noise` / `!job_related` → row stored with `status='dismissed'`, no mutation.
 - **Never auto-create an application.** Always review.
 
 Auto-apply mapping (only on a confident single-application match):
-| kind | action (all `source='ai'`, linked to the email) |
+| kind | action (all `source='ai'`, `events.inbound_action_id` set) |
 |---|---|
 | `interview_scheduled` / `interview_invite` w/ a date | `scheduled` event (type `interview`, subtype, `occurred_at`, body = summary) |
 | `rejection` | application `status='rejected'` (auto status_change event) + `email` event |
@@ -265,11 +283,10 @@ Auto-apply mapping (only on a confident single-application match):
 | `status_update` / `application_confirmation` | `email` event with the summary |
 | `recruiter_outreach`, no application | contact resolved above + `email` event on the contact; `needs_review` if a named hiring company has no application yet |
 
-**Event `occurred_at`** = `extracted.event.occurred_at ?? ingested_emails.received_at`.
-The model only supplies a time when the email body states a *future* interview /
-call slot; for a rejection, confirmation, or note the API dates the event to the
-email itself (`received_at` = the original message date). The model is never
-asked to echo the email's own date.
+**Event `occurred_at`** = `extracted.event.occurred_at ?? inbound_actions.occurred_at`.
+The model only supplies a time when the email states a *future* interview / call
+slot; otherwise the API dates the event to `occurred_at` from the submission
+(the original message date, which the worker passes but the model never echoes).
 
 **Known limitation:** `applications.contact_id` is single-valued. If a second
 recruiter surfaces for a role that already has a contact, the API logs an
@@ -278,61 +295,64 @@ recruiter surfaces for a role that already has a contact, the API logs an
 
 ### 7. Act / review
 - **7a auto** — API writes the events / status changes, sets
-  `ingested_emails.status='auto_applied'`, records what it did in `.applied`.
-- **7b review** — the `ingested_emails` row *is* the review item
-  (`status='needs_review'`). The webapp shows a **Review** queue: email excerpt,
-  the model extraction, candidate matches, and buttons — *Link to <application>*,
-  *Create application*, *Create contact*, *Dismiss*. Resolving calls
-  `POST /api/ingest/:id/resolve` which applies the action.
-- **Disambiguation lives in the worker.** When `/api/ingest` returns
+  `inbound_actions.status='auto_applied'`, records what it did in `.applied`.
+- **7b review** — the `inbound_actions` row *is* the review item
+  (`status='needs_review'`). The webapp shows a **Review** queue: the `summary`,
+  the `extracted` structure, candidate matches, and buttons — *Link to
+  <application>*, *Create application*, *Create contact*, *Dismiss*. Resolving
+  calls `POST /api/inbound/resolve?id=` which applies the action. Nothing here
+  says "email".
+- **Disambiguation lives in the worker.** When `/api/inbound` returns
   `needs_disambiguation` + candidates, the worker runs a second model call
-  (multiple-choice — a 7B does this well) and calls
-  `POST /api/ingest/resolve` with the pick, or leaves it for human review if the
-  model also says "none". `callback` never calls a model.
+  (multiple-choice) and calls `POST /api/inbound/resolve?id=` with the pick, or
+  leaves it for human review if the model says "none". `callback` never calls a
+  model.
 
-### 8. Mark processed  *(worker)*
-Label the Gmail message `callback/processed`; advance the `historyId` cursor.
+### 8. Relabel  *(worker)*
+On a 2xx from `/api/inbound`, move the Gmail message from `callback/processing`
+to `callback/processed`. On a model failure in stage 3, move it to
+`callback/error` (operator can strip the label to retry). On a transport failure
+to `callback`, leave it in `callback/processing` — the next poll retries it.
 
 ---
 
 ## Data model additions
 
-### `ingested_emails` — dedup + audit + review item, one row per email
+### `inbound_actions` — dedup + audit + review item, one row per submission
+Source-agnostic: no email columns. `source` and `external_ref` are opaque
+strings the worker chooses (today: `'gmail-worker'` and a Gmail message id);
+`callback` never parses them.
 ```sql
-create table ingested_emails (
-  id                bigint generated always as identity primary key,
-  user_id           bigint not null references users (id) on delete cascade,
-  source            text not null default 'gmail',
-  source_message_id text not null,          -- gmail id of the forward
-  thread_key        text,                   -- synthesised: orig_from + normalised subject
-  received_at       timestamptz,            -- orig_date, parsed from the forward block
-  from_email        text,                   -- ORIGINAL sender
-  from_name         text,
-  subject           text,                   -- ORIGINAL subject
-  raw_excerpt       text,
-  extracted         jsonb,                 -- model output, verbatim
-  email_kind        text,
-  status            text not null default 'pending'
-                    check (status in ('pending','auto_applied','needs_review',
-                                      'dismissed','duplicate','error')),
-  match             jsonb,                 -- candidates + scores from §5
-  applied           jsonb,                 -- {event_ids:[], status_change:{...}}
-  error             text,
-  created_at        timestamptz not null default now(),
-  resolved_at       timestamptz,
-  unique (user_id, source, source_message_id)
+create table inbound_actions (
+  id            bigint generated always as identity primary key,
+  user_id       bigint not null references users (id) on delete cascade,
+  source        text not null,              -- opaque, e.g. 'gmail-worker'
+  external_ref  text not null,              -- opaque dedup key from the worker
+  occurred_at   timestamptz,                -- when the underlying thing happened
+  summary       text,                       -- human-readable, from the worker
+  payload       jsonb,                      -- the §3 extraction, verbatim
+  match         jsonb,                      -- candidates + scores from §5
+  status        text not null default 'pending'
+                check (status in ('pending','auto_applied','needs_review',
+                                  'dismissed','duplicate','error')),
+  applied       jsonb,                       -- {event_ids:[], status_change:{...}}
+  error         text,
+  created_at    timestamptz not null default now(),
+  resolved_at   timestamptz,
+  thread_key    text generated always as (payload ->> 'thread_key') stored,
+  unique (user_id, source, external_ref)
 );
-create index on ingested_emails (user_id, status, created_at desc);
-create index on ingested_emails (user_id, thread_key);
+create index on inbound_actions (user_id, status, created_at desc);
+create index on inbound_actions (user_id, thread_key);
 ```
 
-### `events.source_email_id`
+### `events.inbound_action_id`
 ```sql
 alter table events
-  add column source_email_id bigint references ingested_emails (id) on delete set null;
+  add column inbound_action_id bigint references inbound_actions (id) on delete set null;
 ```
-Links a timeline entry back to the email that produced it ("why did the AI do
-this?"). `set null` so events outlive a deleted email.
+Links a timeline entry back to the submission that produced it ("why did the AI
+do this?"). `set null` so events outlive a deleted action row.
 
 ### `api_tokens` — worker → API auth
 ```sql
@@ -353,15 +373,6 @@ pasted into the worker env. API middleware hashes the bearer, looks it up, gets
 `user_id` — no table, no UI, but every self-hoster edits env. `api_tokens` is
 the multi-user-correct choice.
 
-### `companies.email_domains text[]`  *(recommended, optional)*
-```sql
-alter table companies add column email_domains text[] not null default '{}';
-```
-`{stripe.com}` makes `from_email` → company matching exact and strong. Populated
-when resolving a review item, or by hand. Cheap, big matching-quality win.
-Only meaningful for in-house senders — agency recruiters' domains are never
-company domains.
-
 ### No schema change for agencies
 
 The agency convention (§3a) needs no new columns. An agency recruiter is just a
@@ -375,10 +386,10 @@ which Phase 1 already supports. The known-agency list is **config**, not data:
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
-| POST | `/api/ingest` | bearer token | worker submits an extracted email; runs match + decide; returns `{status: auto_applied \| needs_review \| needs_disambiguation \| duplicate, applied? , candidates?}` |
-| POST | `/api/ingest/resolve?id=` | bearer token **or** session | resolve a pending row: the worker posts `{choice}` after a `needs_disambiguation`; a human posts `{action:'link'\|'create_application'\|'create_contact'\|'dismiss', ...}` from the review UI |
-| GET | `/api/ingest` | session | list ingested emails (`?status=needs_review` = the review queue; else history) |
-| GET | `/api/ingest?id=` | session | one row + candidates + extraction |
+| POST | `/api/inbound` | bearer token | worker submits an extracted structure + `external_ref`; runs match + decide; returns `{status: auto_applied \| needs_review \| needs_disambiguation \| duplicate, applied? , candidates?}` |
+| POST | `/api/inbound/resolve?id=` | bearer token **or** session | resolve a pending row: the worker posts `{choice}` after a `needs_disambiguation`; a human posts `{action:'link'\|'create_application'\|'create_contact'\|'dismiss', ...}` from the review UI |
+| GET | `/api/inbound` | session | list inbound actions (`?status=needs_review` = the review queue; else history) |
+| GET | `/api/inbound?id=` | session | one row + candidates + extraction |
 | POST | `/api/tokens` | session | create a token (raw returned once) |
 | GET | `/api/tokens` | session | list (no raw) |
 | DELETE | `/api/tokens?id=` | session | revoke |
@@ -399,10 +410,9 @@ src/
   model.ts         Ollama client: chat, format=schema, temperature 0, num_predict cap
   extractor.ts     render prompt + call model + validate -> extraction JSON
   disambiguator.ts render prompt + call model -> chosen candidate
-  gmail.ts         auth, poll (historyId cursor), fetch (format=raw), label   (later)
-  store.ts         local SQLite: cursor, seen-id cache, outbox                (later)
-  submit.ts        drain outbox -> POST /api/ingest / /api/ingest/resolve; backoff   (later)
-  loop.ts          orchestration + error handling                            (later)
+  gmail.ts         auth, poll by label, fetch (format=raw), relabel           (later)
+  submit.ts        POST /api/inbound / /api/inbound/resolve; retry/backoff    (later)
+  loop.ts          orchestration + error handling + label transitions        (later)
 prompts/
   extract.system.md        the extraction instructions (incl. §3a agency rules, prose form)
   extract.fewshot/*.md     labelled examples
@@ -431,20 +441,21 @@ live here** — `callback` holds none. The prose form of the agency convention
 (§3a) is in `prompts/extract.system.md`; the *enforcement* is code in
 `callback` (§6). Two expressions, by design.
 
-**Local SQLite** (`WORKER_DB_PATH`) holds only the worker's own operational
-state — never domain data:
-- `cursor` — last Gmail `historyId` processed
-- `seen` — message ids already handled (fast local dedup; `callback`'s
-  `unique(user_id, source, source_message_id)` is the authoritative check)
-- `outbox` — `{message_id, payload, attempts, last_error}`; extraction result is
-  written here first, then drained to `callback`. If `callback` is down nothing
-  is lost. **At-least-once**; the receiver is idempotent.
+**No worker datastore.** Gmail labels *are* the state machine
+(`callback/inbox` → `callback/processing` → `callback/processed` |
+`callback/error`) and the poll query returns exactly what's outstanding, so
+there is no cursor, no seen-id cache, and no outbox. Delivery is still
+at-least-once — a message left in `callback/processing` by a crash or a lost
+response is re-run on the next poll — and `callback` is the idempotent receiver
+via `unique(user_id, source, external_ref)`. The only file the worker persists
+is the Gmail OAuth token (in `./secrets`).
 
-Env: `OLLAMA_URL` (`http://host.docker.internal:11434` in the container), `OLLAMA_MODEL`,
-`CALLBACK_API_URL`, `CALLBACK_TOKEN`, `WORKER_DB_PATH`,
-`GMAIL_CREDENTIALS_PATH`, `GMAIL_TOKEN_PATH`, `GMAIL_QUERY`,
-`KNOWN_AGENCY_DOMAINS`, `KNOWN_AGENCY_NAMES`, `POLL_INTERVAL_SECONDS`,
-`DRY_RUN` (extract + print, don't submit). **No Postgres / Neon string.**
+Env: `OLLAMA_URL` (`http://host.docker.internal:11434` in the container),
+`OLLAMA_MODEL`, `CALLBACK_API_URL`, `CALLBACK_TOKEN`,
+`GMAIL_CREDENTIALS_PATH`, `GMAIL_TOKEN_PATH`, `GMAIL_QUERY` (the poll query),
+`GMAIL_LABEL_PREFIX` (default `callback/`), `KNOWN_AGENCY_DOMAINS`,
+`KNOWN_AGENCY_NAMES`, `POLL_INTERVAL_SECONDS`, `DRY_RUN` (extract + print, don't
+submit or relabel). **No Postgres / Neon string, no `WORKER_DB_PATH`.**
 
 Node + TS (ecosystem match). Shares the event/status **enums** with `callback`
 via a copied `schemas` snippet or a tiny shared package.
@@ -454,9 +465,14 @@ via a copied `schemas` snippet or a tiny shared package.
 1. **`preprocess` + `extract` CLIs** + `clean.ts` + `model.ts` + the two
    schemas + prompts. No Gmail, no callback, no container required — runs against
    local fixtures and a local Ollama. **This is the model-tuning harness.**
-2. Containerise: `Dockerfile` + `docker-compose.yml` (ollama + worker).
-3. `gmail.ts` (OAuth, poll, fetch `format=raw`, label) + `store.ts` (SQLite).
-4. `submit.ts` (outbox → `/api/ingest`) + `disambiguator.ts` + `loop.ts`.
+   *(done)*
+2. Containerise: `Dockerfile` + `docker-compose.yml` (worker service). *(done)*
+3. `gmail.ts` — OAuth desktop consent, poll by label, fetch `format=raw`,
+   relabel `callback/inbox` → `callback/processing`.
+4. `submit.ts` (`POST /api/inbound`, retry/backoff) + `disambiguator.ts` +
+   `loop.ts` (poll → clean → extract → submit → relabel; `callback/error` on a
+   model failure). Replaces the `main.ts` heartbeat. Build the `callback` side
+   (`inbound_actions`, `/api/inbound`, `/api/tokens`, review UI) alongside.
 
 ---
 
@@ -464,31 +480,33 @@ via a copied `schemas` snippet or a tiny shared package.
 
 | # | Stage | Runs | In | Out |
 |---|---|---|---|---|
-| 1 | Poll | worker | local cursor + `seen` | new message ids |
+| 1 | Poll | worker | Gmail label query (no local state) | outstanding message ids; relabel → `callback/processing` |
 | 2 | Clean | worker | raw MIME (a forward) | unwrapped `{orig_subject, orig_from, orig_to, orig_date, body}` |
 | 3 | **Extract** | worker → **model** ×1 | subject/from/to/body | structured JSON + coarse confidences |
-| 4 | Enqueue + submit | worker | extracted JSON + email meta | write to local outbox → `POST /api/ingest` (retry/backoff) |
-| 5 | Match | `callback` + SQL | extracted JSON | candidate ids + `match_confidence` |
-| 6 | Decide | `callback` rules | match + `email_kind` | `auto_applied` \| `needs_review` \| `needs_disambiguation` |
-| 7a | Auto-act | `callback` | plan | events / status changes (`source='ai'`, `source_email_id`) |
-| 7b | Disambiguate | worker → **model** ×1 | candidates from the response | `POST /api/ingest/resolve {choice}` — or leave for human |
+| 4 | Submit | worker | extracted JSON + `external_ref` + `occurred_at` + `summary` + `thread_key` | `POST /api/inbound` (retry/backoff; stays in `callback/processing` until 2xx) |
+| 5 | Match | `callback` + SQL | `payload` (extracted JSON) | candidate ids + `match_confidence` |
+| 6 | Decide | `callback` rules | match + `email_kind` | `auto_applied` \| `needs_review` \| `needs_disambiguation` \| `dismissed` |
+| 7a | Auto-act | `callback` | plan | events / status changes (`source='ai'`, `inbound_action_id`) |
+| 7b | Disambiguate | worker → **model** ×1 | candidates from the response | `POST /api/inbound/resolve {choice}` — or leave for human |
 | 8 | Human resolve | human → `callback` (session) | choice | action applied |
-| 9 | Mark done | worker | 2xx from `callback` | Gmail label + advance local cursor / `seen` |
+| 9 | Relabel | worker | 2xx from `callback` (or a model failure) | `callback/processed` (or `callback/error`) |
 
 Always-on path: **one model call per email** (stage 3). Stage 7b fires only on
-ambiguity. Neither service holds the other's DB string; the only coupling is the
-`POST /api/ingest*` contract + the bearer token.
+ambiguity. Neither service holds the other's DB string; `callback` never learns
+this is email. The only coupling is the `POST /api/inbound*` contract + the
+bearer token.
 
 ---
 
-## Before building — de-risk the model (do this first)
+## Model de-risking — done (2026-09-10)
 
-Forward ~10 real job emails. Run `qwen2.5:7b`, `llama3.1:8b`, `gemma3:4b`,
-and `phi3.5` against the stage-3 constrained prompt at `temperature 0`,
-`num_predict 200`, JSON-schema `format`. Judge: correct `email_kind`, correct
-company/role/contact extraction, no waffling, valid JSON every time. Commit to
-the crispest one. This single test decides whether the local path is viable and
-which model the rest of Phase 2 assumes.
+The bake-off ran: `qwen2.5:7b-instruct`, `llama3.1:8b`, `gemma3:4b`, `phi3.5`
+against the stage-3 constrained prompt (`temperature 0`, JSON-schema `format`,
+`num_predict 512`) over 12 real forwarded emails. **`qwen2.5:7b-instruct` won**
+— 12/12 `email_kind`, follows the negative field rules, ~6–13 s/email on the
+3070. The small models ignored "never output N/A", produced out-of-range
+confidences, and couldn't hold `interview_invite` vs `interview_scheduled`.
+Results in `callback-worker/test-results/`. The local path is viable.
 
 ---
 
@@ -497,23 +515,30 @@ which model the rest of Phase 2 assumes.
 **Resolved**
 - **Architecture** — two services, no shared DB, HTTP + one bearer token, worker
   outbound-only. All model calls (extract *and* disambiguate) in the worker;
-  `callback` is model-free. Matching + decision rules + review queue in
-  `callback` (co-located with the data; the review UI needs the always-on
-  service). Worker keeps a local SQLite for cursor + at-least-once outbox only.
+  `callback` is model-free.
+- **`callback` is source-agnostic** — one generic `inbound_actions` table
+  (`unique(user_id, source, external_ref)`) and one `/api/inbound` endpoint
+  taking an extracted structure + opaque `source`/`external_ref`. No email
+  columns, no `ingested_emails`. Everything email-shaped lives in the worker.
+- **Worker is near-stateless** — Gmail labels
+  (`callback/inbox` → `callback/processing` → `callback/processed` |
+  `callback/error`) are the state machine. No SQLite, no cursor, no outbox; the
+  only persisted file is the Gmail OAuth token. At-least-once via re-polling
+  `callback/processing`; `callback` is the idempotent receiver.
+- **Model** — `qwen2.5:7b-instruct`, chosen by bake-off (see above).
 - **Gmail intake** — operator forwards from personal Gmail to a dev-account
   `+callback` address; every message is a forward, the worker unwraps it (§2,
   Intake model).
 - **Agencies** — never become `companies`; agency recruiter = contact with
   `company_id=NULL`, `role="Recruiter - <agency>"` (§3a).
+- **Worker language** — Node/TS (ecosystem match with `callback`; `mailparser` +
+  `zod` cover cleaning and schema).
 
 **Open**
 1. **Auto-apply policy.** Default: auto-apply only interview scheduling + status
    changes, only on a confident single-application match; never auto-create an
-   application; everything else → review. Tighten / loosen?
+   application; everything else → review. Tighten / loosen with real traffic.
 2. **Token model.** `api_tokens` table + Settings UI (multi-user correct) vs a
-   single `INGEST_TOKEN` env var (solo shortcut).
-3. **`companies.email_domains`** — add it? (recommended.)
-4. **Worker language** — Node/TS (ecosystem match) vs Python (`talon` for reply
-   stripping is very good).
-5. **`role` label template** and the seed `KNOWN_AGENCY_DOMAINS` /
+   single `INGEST_TOKEN` env var (solo shortcut). Leaning `api_tokens`.
+3. **`role` label template** and the seed `KNOWN_AGENCY_DOMAINS` /
    `KNOWN_AGENCY_NAMES` list — finalise at build time.
