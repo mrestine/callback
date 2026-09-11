@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApplicationForm } from '../components/ApplicationForm'
 import { Badge, Button, EmptyState, ErrorNote, Field, Loading, PageHeader, SelectField, TextField } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
@@ -7,6 +7,7 @@ import { formatDate, titleCase } from '../lib/format'
 import { useApplications, useCompanies, useCreateApplication } from '../lib/queries'
 
 export function Applications() {
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [q, setQ] = useState('')
   const [status, setStatus] = useState(searchParams.get('status') ?? '')
@@ -43,7 +44,7 @@ export function Applications() {
           <ApplicationForm
             submitLabel="Create"
             onCancel={() => setCreating(false)}
-            onSubmit={(values) => create.mutateAsync(values).then(() => setCreating(false))}
+            onSubmit={(values) => create.mutateAsync(values).then((row) => navigate(`/applications/${row.id}`))}
           />
         </div>
       )}

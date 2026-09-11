@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { ContactForm } from '../components/ContactForm'
 import { Badge, Button, EmptyState, ErrorNote, Field, Loading, PageHeader, SelectField, TextField } from '../components/ui'
 import { CONTACT_KINDS } from '../schemas'
@@ -7,6 +7,7 @@ import { formatDate, titleCase } from '../lib/format'
 import { useContacts, useCreateContact } from '../lib/queries'
 
 export function Contacts() {
+  const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [kind, setKind] = useState('')
   const [creating, setCreating] = useState(false)
@@ -36,7 +37,7 @@ export function Contacts() {
           <ContactForm
             submitLabel="Create"
             onCancel={() => setCreating(false)}
-            onSubmit={(values) => create.mutateAsync(values).then(() => setCreating(false))}
+            onSubmit={(values) => create.mutateAsync(values).then((row) => navigate(`/contacts/${row.id}`))}
           />
         </div>
       )}

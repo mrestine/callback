@@ -300,11 +300,13 @@ export type ResolveBody =
   | { action: 'dismiss' }
   | { action: 'choose'; choice: Record<string, number> }
 
-export function useReviewQueue() {
+/** `enabled` false while signed out (e.g. rendered from the layout during redirect). */
+export function useReviewQueue(enabled = true) {
   return useQuery({
     queryKey: ['inbound', 'queue'],
     queryFn: () => api.get<InboundRow[]>('/api/inbound?status=needs_review'),
     refetchInterval: 60_000,
+    enabled,
   })
 }
 

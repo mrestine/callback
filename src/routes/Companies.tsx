@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { CompanyForm } from '../components/CompanyForm'
 import { Button, EmptyState, ErrorNote, Field, Loading, PageHeader, TextField } from '../components/ui'
 import { useCompanies, useCreateCompany } from '../lib/queries'
 
 export function Companies() {
+  const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
   const companies = useCompanies(q)
@@ -32,7 +33,7 @@ export function Companies() {
           <CompanyForm
             submitLabel="Create"
             onCancel={() => setCreating(false)}
-            onSubmit={(values) => create.mutateAsync(values).then(() => setCreating(false))}
+            onSubmit={(values) => create.mutateAsync(values).then((row) => navigate(`/companies/${row.id}`))}
           />
         </div>
       )}
