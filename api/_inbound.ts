@@ -475,7 +475,9 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         const name = clean(A('name') as string)
         if (!name) return { error: 'create_company needs a name' }
         ctes.push(
-          `op_${op.id} as (insert into companies (user_id, name) values (${uid}, ${p(name)}) returning id)`,
+          `op_${op.id} as (insert into companies (user_id, name, careers_url, notes) ` +
+            `values (${uid}, ${p(name)}, ${p(clean(A('careers_url') as string) || null)}, ` +
+            `${p(clean(A('notes') as string) || null)}) returning id)`,
         )
         selects.push(`(select id from op_${op.id}) as op_${op.id}`)
         resultAliases[op.id] = `op_${op.id}`
@@ -485,9 +487,10 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         const companyExpr = refExpr(op.refs?.company_id)
         const name = clean(A('name') as string) || 'Unknown sender'
         ctes.push(
-          `op_${op.id} as (insert into contacts (user_id, company_id, name, email, kind, role) ` +
+          `op_${op.id} as (insert into contacts (user_id, company_id, name, email, kind, role, linkedin_url, warmth, notes) ` +
             `values (${uid}, ${companyExpr ?? 'null'}, ${p(name)}, ${p(A('email'))}, ` +
-            `coalesce(${p(A('kind'))}, 'other'), ${p(A('role'))}) returning id)`,
+            `coalesce(${p(A('kind'))}, 'other'), ${p(A('role'))}, ${p(clean(A('linkedin_url') as string) || null)}, ` +
+            `coalesce(${p(clean(A('warmth') as string) || null)}, 'cold'), ${p(clean(A('notes') as string) || null)}) returning id)`,
         )
         selects.push(`(select id from op_${op.id}) as op_${op.id}`)
         resultAliases[op.id] = `op_${op.id}`
@@ -498,9 +501,22 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         if (!companyExpr) return { error: 'create_application needs a company' }
         const role = clean(A('role_title') as string) || '(role not stated)'
         const st = (A('status') as string) || 'lead'
+        // an application created straight into 'applied' (or later) implies
+        // the applying already happened — default the date to when the
+        // underlying email/event occurred, same fallback add_event uses,
+        // rather than leaving it null. An explicit args.applied_at (the
+        // reviewer typed one in) always wins.
+        const appliedAtInput = clean(A('applied_at') as string)
+        const appliedAt =
+          appliedAtInput ||
+          (st !== 'lead' && ctx.fallbackOccurredAt ? ctx.fallbackOccurredAt.toISOString().slice(0, 10) : null)
         ctes.push(
-          `op_${op.id} as (insert into applications (user_id, company_id, role_title, status, source, inbound_action_id) ` +
-            `values (${uid}, ${companyExpr}, ${p(role)}, ${p(st)}, 'ai', ${iaRef}) returning id)`,
+          `op_${op.id} as (insert into applications ` +
+            `(user_id, company_id, role_title, status, jd_url, source, location, remote, salary_range, applied_at, notes, inbound_action_id) ` +
+            `values (${uid}, ${companyExpr}, ${p(role)}, ${p(st)}, ${p(clean(A('jd_url') as string) || null)}, ` +
+            `${p(clean(A('source') as string) || null)}, ${p(clean(A('location') as string) || null)}, ` +
+            `${p(clean(A('remote') as string) || null)}, ${p(clean(A('salary_range') as string) || null)}, ` +
+            `${p(appliedAt)}::date, ${p(clean(A('notes') as string) || null)}, ${iaRef}) returning id)`,
         )
         selects.push(`(select id from op_${op.id}) as op_${op.id}`)
         resultAliases[op.id] = `op_${op.id}`

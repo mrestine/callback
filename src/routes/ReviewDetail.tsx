@@ -12,8 +12,8 @@ import {
   TextArea,
   TextField,
 } from '../components/ui'
-import { APPLICATION_STATUSES } from '../schemas'
-import { formatDate, titleCase } from '../lib/format'
+import { APPLICATION_STATUSES, CONTACT_KINDS, REMOTE_MODES, WARMTH_LEVELS } from '../schemas'
+import { formatDate, titleCase, toDateInput } from '../lib/format'
 import {
   useApplicationOptions,
   useApplications,
@@ -48,16 +48,20 @@ interface OpState {
   args: Record<string, string>
 }
 
-function initArgs(op: ProposalOp, ex: InboundExtracted | undefined): Record<string, string> {
+function initArgs(op: ProposalOp, ex: InboundExtracted | undefined, occurredAt: string | null | undefined): Record<string, string> {
   const a: Record<string, string> = {}
   for (const [k, v] of Object.entries(op.args ?? {})) a[k] = v == null ? '' : String(v)
   // defaults for a link op the reviewer might convert to "create new"
   if (op.op === 'link_company' && !a.name) a.name = ex?.hiring_company.name ?? ''
-  if (op.op === 'link_application') {
+  if (op.op === 'link_application' || op.op === 'create_application') {
     a.role_title ||= ex?.role.title ?? ''
     a.status ||= ex?.status_signal ?? 'applied'
+    // a non-lead status implies the applying already happened — pre-fill the
+    // date instead of leaving it for the reviewer to notice is missing
+    // (matches the same fallback the backend applies if this is left blank).
+    if (!a.applied_at && a.status !== 'lead') a.applied_at = toDateInput(occurredAt)
   }
-  if (op.op === 'link_contact') {
+  if (op.op === 'link_contact' || op.op === 'create_contact') {
     a.name ||= ex?.sender.name ?? ex?.sender.email ?? ''
     a.email ||= ex?.sender.email ?? ''
     a.kind ||= ex?.sender.kind ?? 'other'
@@ -110,7 +114,7 @@ export function ReviewDetail() {
             decision: op.decision,
             mode: op.op.startsWith('create_') ? 'create' : 'link',
             chosen: cand ? { id: cand.id, label: isApplication ? withCompany(cand) : cand.label } : null,
-            args: initArgs(op, ex),
+            args: initArgs(op, ex, detail.data?.occurred_at),
           } as OpState,
         ]
       }),
@@ -428,9 +432,23 @@ function OpCard({
       {showCreateFields && (
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           {createOp === 'create_company' && (
-            <Field label="Company name">
-              <TextField value={s.args.name ?? ''} onChange={(e) => onChange({ args: { ...s.args, name: e.target.value } })} />
-            </Field>
+            <>
+              <Field label="Company name">
+                <TextField value={s.args.name ?? ''} onChange={(e) => onChange({ args: { ...s.args, name: e.target.value } })} />
+              </Field>
+              <Field label="Careers URL">
+                <TextField
+                  type="url"
+                  inputMode="url"
+                  placeholder="https://…"
+                  value={s.args.careers_url ?? ''}
+                  onChange={(e) => onChange({ args: { ...s.args, careers_url: e.target.value } })}
+                />
+              </Field>
+              <Field label="Notes">
+                <TextArea value={s.args.notes ?? ''} onChange={(e) => onChange({ args: { ...s.args, notes: e.target.value } })} />
+              </Field>
+            </>
           )}
           {createOp === 'create_application' && (
             <>
@@ -443,7 +461,14 @@ function OpCard({
               <Field label="Status">
                 <SelectField
                   value={s.args.status ?? 'applied'}
-                  onChange={(e) => onChange({ args: { ...s.args, status: e.target.value } })}
+                  onChange={(e) => {
+                    const status = e.target.value
+                    // switching to a non-lead status implies applying already
+                    // happened — default the date to today if nothing's set
+                    const applied_at =
+                      s.args.applied_at || (status !== 'lead' ? new Date().toISOString().slice(0, 10) : '')
+                    onChange({ args: { ...s.args, status, applied_at } })
+                  }}
                 >
                   {APPLICATION_STATUSES.map((st) => (
                     <option key={st} value={st}>
@@ -452,6 +477,49 @@ function OpCard({
                   ))}
                 </SelectField>
               </Field>
+              <Field label="Applied on">
+                <TextField
+                  type="date"
+                  value={s.args.applied_at ?? ''}
+                  onChange={(e) => onChange({ args: { ...s.args, applied_at: e.target.value } })}
+                />
+              </Field>
+              <Field label="Job posting URL">
+                <TextField
+                  type="url"
+                  inputMode="url"
+                  placeholder="https://…"
+                  value={s.args.jd_url ?? ''}
+                  onChange={(e) => onChange({ args: { ...s.args, jd_url: e.target.value } })}
+                />
+              </Field>
+              <Field label="Source" hint="referral, LinkedIn, cold…">
+                <TextField value={s.args.source ?? ''} onChange={(e) => onChange({ args: { ...s.args, source: e.target.value } })} />
+              </Field>
+              <Field label="Location">
+                <TextField value={s.args.location ?? ''} onChange={(e) => onChange({ args: { ...s.args, location: e.target.value } })} />
+              </Field>
+              <Field label="Remote">
+                <SelectField value={s.args.remote ?? ''} onChange={(e) => onChange({ args: { ...s.args, remote: e.target.value } })}>
+                  <option value="">— unspecified —</option>
+                  {REMOTE_MODES.map((m) => (
+                    <option key={m} value={m}>
+                      {titleCase(m)}
+                    </option>
+                  ))}
+                </SelectField>
+              </Field>
+              <Field label="Salary range">
+                <TextField
+                  value={s.args.salary_range ?? ''}
+                  onChange={(e) => onChange({ args: { ...s.args, salary_range: e.target.value } })}
+                />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Notes">
+                  <TextArea value={s.args.notes ?? ''} onChange={(e) => onChange({ args: { ...s.args, notes: e.target.value } })} />
+                </Field>
+              </div>
             </>
           )}
           {createOp === 'create_contact' && (
@@ -465,6 +533,38 @@ function OpCard({
               <Field label="Role">
                 <TextField value={s.args.role ?? ''} onChange={(e) => onChange({ args: { ...s.args, role: e.target.value } })} />
               </Field>
+              <Field label="Kind">
+                <SelectField value={s.args.kind ?? 'other'} onChange={(e) => onChange({ args: { ...s.args, kind: e.target.value } })}>
+                  {CONTACT_KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {titleCase(k)}
+                    </option>
+                  ))}
+                </SelectField>
+              </Field>
+              <Field label="LinkedIn URL">
+                <TextField
+                  type="url"
+                  inputMode="url"
+                  placeholder="https://…"
+                  value={s.args.linkedin_url ?? ''}
+                  onChange={(e) => onChange({ args: { ...s.args, linkedin_url: e.target.value } })}
+                />
+              </Field>
+              <Field label="Warmth">
+                <SelectField value={s.args.warmth ?? 'cold'} onChange={(e) => onChange({ args: { ...s.args, warmth: e.target.value } })}>
+                  {WARMTH_LEVELS.map((w) => (
+                    <option key={w} value={w}>
+                      {titleCase(w)}
+                    </option>
+                  ))}
+                </SelectField>
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Notes">
+                  <TextArea value={s.args.notes ?? ''} onChange={(e) => onChange({ args: { ...s.args, notes: e.target.value } })} />
+                </Field>
+              </div>
             </>
           )}
         </div>
@@ -505,15 +605,33 @@ function OpCard({
 }
 
 function pickCreateArgs(op: string, args: Record<string, string>): Record<string, unknown> {
-  if (op === 'create_company') return { name: args.name?.trim() }
+  if (op === 'create_company')
+    return {
+      name: args.name?.trim(),
+      careers_url: args.careers_url?.trim() || null,
+      notes: args.notes?.trim() || null,
+    }
   if (op === 'create_application')
-    return { role_title: args.role_title?.trim() || '(role not stated)', status: args.status || 'applied' }
+    return {
+      role_title: args.role_title?.trim() || '(role not stated)',
+      status: args.status || 'applied',
+      jd_url: args.jd_url?.trim() || null,
+      source: args.source?.trim() || null,
+      location: args.location?.trim() || null,
+      remote: args.remote || null,
+      salary_range: args.salary_range?.trim() || null,
+      applied_at: args.applied_at || null,
+      notes: args.notes?.trim() || null,
+    }
   if (op === 'create_contact')
     return {
       name: args.name?.trim() || args.email?.trim() || 'Unknown',
       email: args.email?.trim() || null,
       kind: args.kind || 'other',
       role: args.role?.trim() || null,
+      linkedin_url: args.linkedin_url?.trim() || null,
+      warmth: args.warmth || null,
+      notes: args.notes?.trim() || null,
     }
   return {}
 }

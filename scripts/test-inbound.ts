@@ -103,7 +103,16 @@ async function scenarioNewCompanyConfirmation() {
   check('company Encamp created', !!co)
   const [app] = await sql`select * from applications where user_id = ${TEST_UID} and company_id = ${co?.id}`
   check('application created, linked to company', !!app && app.role_title === 'Senior Software Engineer', app)
-  check('application.source = ai', app?.source === 'ai')
+  check('application.status = applied', app?.status === 'applied', app)
+  check(
+    'application.applied_at backfilled from the submission date (status != lead, none given)',
+    app?.applied_at && new Date(app.applied_at).toISOString().slice(0, 10) === '2026-09-08',
+    app?.applied_at,
+  )
+  // provenance is inbound_action_id, not the free-text source column — that's
+  // user-fillable ("referral", "LinkedIn"...) same as a manually-created app,
+  // and stays null unless the reviewer fills it in before approving
+  check('application.source is null (not hardcoded, nothing was filled in)', app?.source === null, app?.source)
   check('application.inbound_action_id set', Number(app?.inbound_action_id) === iaId)
   const evs = await sql`select * from events where user_id = ${TEST_UID} and application_id = ${app?.id}`
   check('one applied/email event on the application', evs.length === 1, evs)
