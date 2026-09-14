@@ -90,7 +90,10 @@ export function ReviewDetail() {
   const appsQuery = useApplications({})
   const companyByAppId = useMemo(() => {
     const m = new Map<number, string>()
-    for (const a of appsQuery.data ?? []) if (a.company_name) m.set(a.id, a.company_name)
+    // `id` comes back from Postgres bigint as a string over JSON on this API
+    // (unlike _inbound.ts's match candidates, which coerce it) — Number() both
+    // sides so the Map lookup below isn't a silent string/number mismatch.
+    for (const a of appsQuery.data ?? []) if (a.company_name) m.set(Number(a.id), a.company_name)
     return m
   }, [appsQuery.data])
   const withCompany = (c: MatchCandidate): string => {
