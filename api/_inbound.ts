@@ -98,11 +98,14 @@ export async function matchEntities(
     }
     companies.push(company)
 
+    // a company that's ambiguous or not yet on file has no applications to
+    // search among — matching anyway (ignoring company entirely) is how an
+    // unrelated role at a different company used to show up as a candidate.
     const priorApp = i === 0 ? threadPriorApp : null
     const application =
-      agency || withheld || (!companyName && priorApp == null)
-        ? empty()
-        : await matchApplication(uid, roleTitle, company.chosen, priorApp)
+      !agency && !withheld && company.chosen != null
+        ? await matchApplication(uid, roleTitle, company.chosen, priorApp)
+        : empty()
     applications.push(application)
   }
 
@@ -155,29 +158,33 @@ async function matchCompany(uid: number, name: string): Promise<EntityMatch> {
   return { chosen: confident ? Number(top.id) : null, candidates }
 }
 
+/** only called once a company is confidently resolved (or thread continuity
+ *  overrides it) — never with `companyId: null` scanning every company, which
+ *  used to surface unrelated applications as "candidates" for a role that in
+ *  fact belongs to a company not yet on file (see matchEntities). */
 async function matchApplication(
   uid: number,
   role: string,
-  companyId: number | null,
+  companyId: number,
   threadPriorApp: number | null,
 ): Promise<EntityMatch> {
   const rows = await sql`
-    select a.id, a.role_title, a.status, a.company_id,
+    select a.id, a.role_title, a.status, co.name as company_name,
       similarity(a.role_title, ${role}) as score
     from applications a
-    where a.user_id = ${uid}
-      and (${companyId}::bigint is null or a.company_id = ${companyId})
+    join companies co on co.id = a.company_id
+    where a.user_id = ${uid} and a.company_id = ${companyId}
       and a.status <> all(${INACTIVE})
     order by score desc, a.created_at desc
     limit 5
   `
   const candidates: MatchCandidate[] = rows.map((r) => ({
     id: Number(r.id),
-    label: `${r.role_title} · ${r.status}`,
+    label: `${r.company_name} — ${r.role_title} · ${r.status}`,
     score: Number(r.score),
   }))
   if (threadPriorApp) return { chosen: threadPriorApp, candidates }
-  const activeAtCompany = companyId != null && rows.length === 1
+  const activeAtCompany = rows.length === 1
   const strong = rows[0] && Number(rows[0].score) >= 0.55
   return { chosen: activeAtCompany || strong ? Number(rows[0].id) : null, candidates }
 }
@@ -349,31 +356,21 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
     }
   }
 
-  // --- event(s) ---------------------------------------------------------
-  // one per opportunity that has an application, each on that application +
-  // the shared contact; if nothing got an application, one event on the
-  // contact alone so a bare recruiter note still lands somewhere.
-  const appEventRefs = appRefs
-    .map((appRef, i) => (appRef ? { i, appRef } : null))
-    .filter((v): v is { i: number; appRef: string } => v !== null)
-  if (appEventRefs.length > 0) {
-    appEventRefs.forEach(({ i, appRef }, order) => {
-      const refs: Record<string, string> = { application_id: appRef }
-      if (order === 0 && contactRef) refs.contact_id = contactRef
-      ops.push({
-        id: `e${i + 1}`,
-        op: 'add_event',
-        args: {
-          type: eventTypeFor(kind),
-          subtype: clean(ex.event?.subtype) || null,
-          body: clean(ex.event?.summary) || clean(ex.notes) || null,
-          occurred_at: clean(ex.event?.occurred_at) || null,
-        },
-        refs,
-        decision: 'accept',
-      })
-    })
-  } else if (contactRef) {
+  // --- event — exactly one per submission ------------------------------
+  // A forwarded email is one event, no matter how many companies/applications
+  // it produced (there's exactly one conversation with the sender). Single
+  // opportunity: attach to that application + the contact, as before. Several
+  // opportunities: no single one of them "owns" the email, so attach to the
+  // contact only; if there's no contact either (rare — no-reply, no name),
+  // fall back to whichever application exists so it lands somewhere.
+  const eventRefs: Record<string, string> = {}
+  if (opportunities.length === 1 && appRefs[0]) eventRefs.application_id = appRefs[0]
+  if (contactRef) eventRefs.contact_id = contactRef
+  if (Object.keys(eventRefs).length === 0) {
+    const anyAppRef = appRefs.find((r): r is string => r != null)
+    if (anyAppRef) eventRefs.application_id = anyAppRef
+  }
+  if (Object.keys(eventRefs).length > 0) {
     ops.push({
       id: 'e1',
       op: 'add_event',
@@ -383,7 +380,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
         body: clean(ex.event?.summary) || clean(ex.notes) || null,
         occurred_at: clean(ex.event?.occurred_at) || null,
       },
-      refs: { contact_id: contactRef },
+      refs: eventRefs,
       decision: 'accept',
     })
   }

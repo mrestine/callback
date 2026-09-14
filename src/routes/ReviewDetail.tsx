@@ -13,8 +13,8 @@ import {
 } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
 import { formatDate, titleCase } from '../lib/format'
-import { useInboundAction, useResolveInbound, type OpOverride } from '../lib/queries'
-import type { InboundExtracted, ProposalOp } from '../lib/types'
+import { useApplications, useInboundAction, useResolveInbound, type OpOverride } from '../lib/queries'
+import type { InboundExtracted, MatchCandidate, ProposalOp } from '../lib/types'
 
 const CREATE_OF: Record<string, string> = {
   link_company: 'create_company',
@@ -82,6 +82,41 @@ export function ReviewDetail() {
         } as OpState,
       ]),
     )
+
+  // application candidates from older stored proposals (or an application
+  // matched with no company scoping) may not carry a company name in their
+  // label — backfill it client-side from the live applications list so it
+  // never depends on re-submitting the email.
+  const appsQuery = useApplications({})
+  const companyByAppId = useMemo(() => {
+    const m = new Map<number, string>()
+    for (const a of appsQuery.data ?? []) if (a.company_name) m.set(a.id, a.company_name)
+    return m
+  }, [appsQuery.data])
+  const withCompany = (c: MatchCandidate): string => {
+    const name = companyByAppId.get(c.id)
+    return name && !c.label.startsWith(name) ? `${name} — ${c.label}` : c.label
+  }
+
+  // "→ where this is going" for every op, resolved from its CURRENT (possibly
+  // reviewer-edited) state — a new company/application shows "new company: X",
+  // a picked link shows the candidate's label. Keyed by op id so add_event and
+  // create/link_application can point at it via refs.
+  const refLabels = useMemo(() => {
+    const out: Record<string, string> = {}
+    for (const op of ops) {
+      const s = opState[op.id]
+      if (!s) continue
+      const kind = op.op.includes('company') ? 'company' : op.op.includes('application') ? 'application' : 'contact'
+      if (s.mode === 'create') {
+        out[op.id] = `new ${kind}: ${s.args.name || s.args.role_title || s.args.email || '(unnamed)'}`
+      } else {
+        const cand = op.match?.candidates.find((c) => c.id === s.chosen)
+        if (cand) out[op.id] = `${kind}: ${kind === 'application' ? withCompany(cand) : cand.label}`
+      }
+    }
+    return out
+  }, [ops, opState, companyByAppId])
 
   if (!Number.isInteger(id) || id <= 0) return <ErrorNote error={new Error('Invalid id')} />
   if (detail.isPending) return <Loading />
@@ -200,7 +235,14 @@ export function ReviewDetail() {
       ) : (
         <div className="space-y-3">
           {ops.map((op) => (
-            <OpCard key={op.id} op={op} s={opState[op.id]} onChange={(patch) => set(op.id, patch)} />
+            <OpCard
+              key={op.id}
+              op={op}
+              s={opState[op.id]}
+              onChange={(patch) => set(op.id, patch)}
+              refLabels={refLabels}
+              withCompany={withCompany}
+            />
           ))}
         </div>
       )}
@@ -292,14 +334,28 @@ function OpCard({
   op,
   s,
   onChange,
+  refLabels,
+  withCompany,
 }: {
   op: ProposalOp
   s: OpState
   onChange: (patch: Partial<OpState>) => void
+  refLabels: Record<string, string>
+  withCompany: (c: MatchCandidate) => string
 }) {
   const isLink = op.op.startsWith('link_')
+  const isApplication = op.op.includes('application')
   const showCreateFields = (isLink && s.mode === 'create') || op.op.startsWith('create_')
   const createOp = op.op.startsWith('create_') ? op.op : CREATE_OF[op.op]
+
+  // candidates already come ordered by match confidence (backend), highest first
+  const candidates = isApplication ? [...(op.match?.candidates ?? [])].sort((a, b) => b.score - a.score) : op.match?.candidates ?? []
+
+  function target(refKey: string): string | null {
+    const ref = op.refs?.[refKey]
+    if (!ref) return null
+    return refLabels[ref.replace(/^\$/, '')] ?? null
+  }
 
   return (
     <div
@@ -323,6 +379,10 @@ function OpCard({
 
       {op.reason && <p className="mb-2 text-xs text-gray-400">{op.reason}</p>}
 
+      {(op.op === 'link_application' || op.op === 'create_application') && target('company_id') && (
+        <p className="mb-2 text-xs text-gray-400">→ {target('company_id')}</p>
+      )}
+
       {isLink && (
         <Field label="Match">
           <SelectField
@@ -334,9 +394,9 @@ function OpCard({
             }}
           >
             <option value="">— pick one —</option>
-            {op.match?.candidates.map((c) => (
+            {candidates.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.label} ({c.score.toFixed(2)})
+                {isApplication ? withCompany(c) : c.label} ({c.score.toFixed(2)})
               </option>
             ))}
             <option value="__create__">➕ Create new instead</option>
@@ -394,6 +454,10 @@ function OpCard({
           <p className="mb-1 text-xs text-gray-400">
             {titleCase(String(op.args?.type ?? 'email'))}
             {op.args?.occurred_at ? ` · ${formatDate(String(op.args.occurred_at))}` : ''}
+          </p>
+          <p className="mb-2 text-xs text-gray-400">
+            → on{' '}
+            {[target('application_id'), target('contact_id')].filter(Boolean).join(' and ') || 'nothing (no contact or application resolved)'}
           </p>
           <Field label="Body">
             <TextArea value={s.args.body ?? ''} onChange={(e) => onChange({ args: { ...s.args, body: e.target.value } })} />

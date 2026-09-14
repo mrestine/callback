@@ -213,7 +213,7 @@ async function scenarioMultiOpportunity() {
   check('3 create_application ops, all accepted, all lead', createApps.length === 3 && createApps.every((o) => o.decision === 'accept' && o.args?.status === 'lead'), createApps)
   check('has create_contact for Scott (accepted, no company link — agency)', ops.some((o) => o.op === 'create_contact' && o.decision === 'accept' && o.refs?.company_id === undefined))
   const events = ops.filter((o) => o.op === 'add_event')
-  check('3 events, one per application, contact only on the first', events.length === 3 && events.filter((o) => o.refs?.contact_id).length === 1, events)
+  check('exactly ONE event for the whole email, on the contact (not any one application)', events.length === 1 && events[0].refs?.contact_id === '$ct1' && events[0].refs?.application_id === undefined, events)
 
   const iaId = await seedInbound(ex, null, '2026-09-14T09:10:00Z')
   const { result } = await runApply(iaId, ops, '2026-09-14T09:10:00Z')
@@ -225,6 +225,8 @@ async function scenarioMultiOpportunity() {
   check('all 3 companies created, right names', cos.length === 3 && companyNames.every((n) => cos.some((c) => c.name === n)), cos)
   const cts = await sql`select * from contacts where user_id = ${TEST_UID} and email = 'scott.bennett@motionrecruitment.com'`
   check('recruiter contact created with company_id NULL (agency convention)', cts.length === 1 && cts[0].company_id === null, cts)
+  const evs = await sql`select * from events where user_id = ${TEST_UID} and inbound_action_id = ${iaId}`
+  check('exactly one events row written to the DB (not 3)', evs.length === 1 && evs[0].contact_id === cts[0].id && evs[0].application_id === null, evs)
 }
 
 async function main() {
