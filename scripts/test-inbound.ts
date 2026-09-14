@@ -191,6 +191,65 @@ async function scenarioThreadContinuity() {
   check('thread continuity picked the prior application', match.applications[0].chosen === Number(app.id), match.applications[0])
 }
 
+async function scenarioAllLinkedNoCompanyRef() {
+  console.log('\n# interview email, company/application/contact ALL already matched -> link-only proposal applies cleanly')
+  // real bug (found live, id 53): when every entity resolves via link_* (no
+  // create_*) and nothing downstream references the company's own id — here
+  // link_application/link_contact don't route through refs.company_id, only
+  // add_event/set_status reference the application/contact — buildApplyPlan
+  // used to eagerly bind $N for every link op's chosen id regardless of
+  // whether the generated SQL ever mentioned that placeholder. An unused $N
+  // makes postgres fail outright: "could not determine data type of
+  // parameter $N" — not a graceful no-op, a hard apply failure with an
+  // opaque error on every attempt.
+  const [co] = await sql`select id from companies where user_id = ${TEST_UID} and name = 'Flex'`
+  const [app] = await sql`select id from applications where user_id = ${TEST_UID} and company_id = ${co.id} limit 1`
+  const [ct] = await sql`select id from contacts where user_id = ${TEST_UID} and email = 'alexandra.weber@getflex.com'`
+
+  const ops = [
+    { id: 'c1', op: 'link_company', match: { chosen: Number(co.id), candidates: [] }, decision: 'accept' },
+    {
+      id: 'a1',
+      op: 'link_application',
+      refs: { company_id: '$c1' },
+      match: { chosen: Number(app.id), candidates: [] },
+      decision: 'accept',
+    },
+    { id: 'ct1', op: 'link_contact', match: { chosen: Number(ct.id), candidates: [] }, decision: 'accept' },
+    {
+      id: 'e1',
+      op: 'add_event',
+      args: { type: 'interview', subtype: null, body: 'Interview scheduled.', occurred_at: '2026-09-16T11:00:00-04:00' },
+      refs: { contact_id: '$ct1', application_id: '$a1' },
+      decision: 'accept',
+    },
+    { id: 's1', op: 'set_status', args: { status: 'screen' }, refs: { application_id: '$a1' }, decision: 'accept' },
+  ] as ReturnType<typeof proposeOps>['ops']
+
+  const iaId = await seedInbound(
+    { job_related: true, email_kind: 'interview_scheduled' } as Extracted,
+    null,
+    '2026-09-14T18:06:00Z',
+  )
+  const plan = buildApplyPlan(ops, { uid: TEST_UID, inboundActionId: iaId, fallbackOccurredAt: new Date('2026-09-14T18:06:00Z') })
+  check('buildApplyPlan did not error', !('error' in plan), plan)
+  if ('error' in plan) return
+
+  // the exact bug: a $N with no matching placeholder anywhere in the text
+  const placeholders = new Set(plan.text.match(/\$\d+/g))
+  check(
+    'every bound parameter is referenced in the generated SQL (no orphaned $N)',
+    plan.params.every((_, i) => placeholders.has(`$${i + 1}`)),
+    { params: plan.params, text: plan.text },
+  )
+
+  const [result] = (await sql(plan.text, plan.params)) as Record<string, unknown>[]
+  check('applied against the real DB (this is exactly where it failed live)', result?.ia_id != null, result)
+
+  const [after] = await sql`select status from applications where id = ${app.id}`
+  check('application.status -> screen', after?.status === 'screen', after)
+}
+
 async function scenarioMultiOpportunity() {
   console.log('\n# agency recruiter, 3 distinct opportunities named -> 3x create_company + create_application')
   const ex: Extracted = {
@@ -244,6 +303,7 @@ async function main() {
     await scenarioNewCompanyConfirmation()
     await scenarioKnownCompanyRejection()
     await scenarioThreadContinuity()
+    await scenarioAllLinkedNoCompanyRef()
     await scenarioMultiOpportunity()
   } finally {
     await reset()

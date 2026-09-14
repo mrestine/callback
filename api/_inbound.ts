@@ -440,25 +440,41 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
     return `$${params.length}`
   }
 
-  // resolve each op to a literal id or a CTE alias
-  type Resolved = { kind: 'lit'; expr: string } | { kind: 'cte'; alias: string }
+  // resolve each op to a literal id or a CTE alias. A link op's id is stored
+  // as the raw value, NOT yet bound as a $N parameter — a proposal where
+  // every entity is linked (not created) commonly has one that nothing else
+  // ever references (e.g. link_company when only its application and
+  // contact end up wired into add_event/set_status). Binding it eagerly
+  // here left a $N in `params` with no matching placeholder anywhere in the
+  // generated SQL text, which postgres rejects outright ("could not
+  // determine data type of parameter $N") rather than just ignoring —
+  // so `refExpr` below allocates (and memoizes) the placeholder lazily, only
+  // for ids actually referenced by something.
+  type Resolved = { kind: 'lit'; value: number } | { kind: 'cte'; alias: string }
   const resolved = new Map<string, Resolved>()
   for (const op of live) {
     if (op.op === 'link_company' || op.op === 'link_application' || op.op === 'link_contact') {
       if (op.match?.chosen == null) return { error: `op ${op.id} (${op.op}) has no chosen row` }
-      resolved.set(op.id, { kind: 'lit', expr: p(op.match.chosen) })
+      resolved.set(op.id, { kind: 'lit', value: op.match.chosen })
     } else if (op.op !== 'add_event' && op.op !== 'set_status') {
       resolved.set(op.id, { kind: 'cte', alias: `op_${op.id}` })
     }
   }
 
   /** a ref value ("$c1") -> SQL expression, or null if it points at a skipped op */
+  const litParams = new Map<string, string>()
   const refExpr = (ref: string | undefined): string | null => {
     if (!ref) return null
     const target = ref.replace(/^\$/, '')
     const r = resolved.get(target)
     if (!r) return null
-    return r.kind === 'lit' ? r.expr : `(select id from ${r.alias})`
+    if (r.kind === 'cte') return `(select id from ${r.alias})`
+    let expr = litParams.get(target)
+    if (!expr) {
+      expr = p(r.value)
+      litParams.set(target, expr)
+    }
+    return expr
   }
 
   const ctes: string[] = []
