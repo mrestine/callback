@@ -21,14 +21,26 @@ export interface EntityMatch {
   chosen: number | null
   candidates: MatchCandidate[]
 }
+/** one hiring_company + role pair; index 0 is always the extraction's
+ *  top-level fields, index 1+ are `additional_opportunities` (rare: more
+ *  than one distinct role/company the operator is pursuing from one email). */
+interface Opportunity {
+  hiring_company?: Extracted['hiring_company']
+  role?: Extracted['role']
+}
 export interface MatchResult {
   contact: EntityMatch
-  company: EntityMatch
-  application: EntityMatch
+  /** one per opportunity, same order/length as `opportunitiesOf(ex)` */
+  companies: EntityMatch[]
+  applications: EntityMatch[]
 }
 
 const empty = (): EntityMatch => ({ chosen: null, candidates: [] })
 const clean = (s: string | null | undefined) => (s ?? '').trim()
+
+function opportunitiesOf(ex: Extracted): Opportunity[] {
+  return [{ hiring_company: ex.hiring_company, role: ex.role }, ...(ex.additional_opportunities ?? [])]
+}
 
 // --------------------------------------------------------------------------
 // 5. Match  (deterministic + SQL, no model)
@@ -40,17 +52,14 @@ export async function matchEntities(
 ): Promise<MatchResult> {
   const senderEmail = clean(ex.sender?.email).toLowerCase()
   const senderName = clean(ex.sender?.name)
-  const companyName = clean(ex.hiring_company?.name)
-  const roleTitle = clean(ex.role?.title)
-  const withheld = ex.hiring_company?.withheld === true
   const agency = ex.sender?.is_agency_recruiter === true
 
   const contact = await matchContact(uid, senderEmail, senderName)
-  const company =
-    agency || withheld || !companyName ? empty() : await matchCompany(uid, companyName)
 
-  // thread continuity: reuse the application a prior message in this thread resolved to
+  // thread continuity: reuse the application a prior message in this thread
+  // resolved to — only meaningful for the first/primary opportunity.
   let threadPriorApp: number | null = null
+  let threadPriorCompany: number | null = null
   if (threadKey) {
     const prior = await sql`
       select applied from inbound_actions
@@ -68,19 +77,36 @@ export async function matchEntities(
         `
         if (live) {
           threadPriorApp = Number(live.id)
-          if (company.chosen == null && live.company_id) company.chosen = Number(live.company_id)
+          threadPriorCompany = live.company_id ? Number(live.company_id) : null
           break
         }
       }
     }
   }
 
-  const application =
-    agency || withheld || (!companyName && threadPriorApp == null)
-      ? empty()
-      : await matchApplication(uid, roleTitle, company.chosen, threadPriorApp)
+  const companies: EntityMatch[] = []
+  const applications: EntityMatch[] = []
+  for (const [i, opp] of opportunitiesOf(ex).entries()) {
+    const companyName = clean(opp.hiring_company?.name)
+    const withheld = opp.hiring_company?.withheld === true
+    const roleTitle = clean(opp.role?.title)
 
-  return { contact, company, application }
+    const company =
+      agency || withheld || !companyName ? empty() : await matchCompany(uid, companyName)
+    if (i === 0 && company.chosen == null && threadPriorCompany != null) {
+      company.chosen = threadPriorCompany
+    }
+    companies.push(company)
+
+    const priorApp = i === 0 ? threadPriorApp : null
+    const application =
+      agency || withheld || (!companyName && priorApp == null)
+        ? empty()
+        : await matchApplication(uid, roleTitle, company.chosen, priorApp)
+    applications.push(application)
+  }
+
+  return { contact, companies, applications }
 }
 
 async function matchContact(
@@ -205,77 +231,92 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
 
   const kind = ex.email_kind
   const agency = ex.sender?.is_agency_recruiter === true
-  const withheld = ex.hiring_company?.withheld === true
-  const companyName = clean(ex.hiring_company?.name)
-  const companyKnown = !agency && !withheld && !!companyName
+  const opportunities = opportunitiesOf(ex)
+  // >1 opportunity only happens when the operator explicitly named several
+  // distinct roles/companies to pursue in one email (see extract.system.md) —
+  // an explicit decision, unlike a passive single agency pitch. That earns two
+  // deviations from the single-opportunity rule below: an agency-sourced
+  // company/application gets created anyway, and each defaults to accepted
+  // rather than an optional skip.
+  const isMulti = opportunities.length > 1
 
   const ops: ProposalOp[] = []
+  const appRefs: (string | null)[] = []
 
-  // --- company -------------------------------------------------------
-  let companyRef: string | null = null
-  if (companyKnown) {
-    companyRef = '$c1'
-    if (match.company.chosen != null || match.company.candidates.length > 0) {
-      ops.push({
-        id: 'c1',
-        op: 'link_company',
-        match: match.company,
-        decision: 'accept',
-        reason: match.company.chosen == null ? 'pick the company or switch to create' : undefined,
-      })
-    } else {
-      ops.push({
-        id: 'c1',
-        op: 'create_company',
-        args: { name: companyName },
-        decision: 'accept',
-        reason: 'no company on file with this name',
-      })
+  // --- company + application, one pair per opportunity ----------------
+  for (const [i, opp] of opportunities.entries()) {
+    const n = i + 1
+    const withheld = opp.hiring_company?.withheld === true
+    const companyName = clean(opp.hiring_company?.name)
+    const companyKnown = (!agency || isMulti) && !withheld && !!companyName
+    const companyMatch = match.companies[i] ?? empty()
+    const applicationMatch = match.applications[i] ?? empty()
+
+    let companyRef: string | null = null
+    if (companyKnown) {
+      companyRef = `$c${n}`
+      if (companyMatch.chosen != null || companyMatch.candidates.length > 0) {
+        ops.push({
+          id: `c${n}`,
+          op: 'link_company',
+          match: companyMatch,
+          decision: 'accept',
+          reason: companyMatch.chosen == null ? 'pick the company or switch to create' : undefined,
+        })
+      } else {
+        ops.push({
+          id: `c${n}`,
+          op: 'create_company',
+          args: { name: companyName },
+          decision: 'accept',
+          reason: 'no company on file with this name',
+        })
+      }
     }
+
+    let appRef: string | null = null
+    if (companyKnown || applicationMatch.chosen != null) {
+      appRef = `$a${n}`
+      if (applicationMatch.chosen != null || applicationMatch.candidates.length > 0) {
+        ops.push({
+          id: `a${n}`,
+          op: 'link_application',
+          refs: companyRef ? { company_id: companyRef } : undefined,
+          match: applicationMatch,
+          decision: 'accept',
+          reason:
+            applicationMatch.chosen == null ? 'pick the application or switch to create' : undefined,
+        })
+      } else if (WANTS_APPLICATION.has(kind) || isMulti) {
+        ops.push({
+          id: `a${n}`,
+          op: 'create_application',
+          args: {
+            role_title: clean(opp.role?.title) || '(role not stated)',
+            status: initialStatus(kind, ex.status_signal),
+          },
+          refs: companyRef ? { company_id: companyRef } : undefined,
+          decision: 'accept',
+          reason: 'no matching application — will create one',
+        })
+      } else {
+        // recruiter_outreach / status_update etc. with a named company but no app:
+        // offer a create, but skipped by default (event lands on the contact)
+        ops.push({
+          id: `a${n}`,
+          op: 'create_application',
+          args: { role_title: clean(opp.role?.title) || '(role not stated)', status: 'lead' },
+          refs: companyRef ? { company_id: companyRef } : undefined,
+          decision: 'skip',
+          reason: 'optional — only if you want to track this as an application',
+        })
+        appRef = null
+      }
+    }
+    appRefs.push(appRef)
   }
 
-  // --- application -------------------------------------------------
-  let appRef: string | null = null
-  if (companyKnown || match.application.chosen != null) {
-    appRef = '$a1'
-    if (match.application.chosen != null || match.application.candidates.length > 0) {
-      ops.push({
-        id: 'a1',
-        op: 'link_application',
-        refs: companyRef ? { company_id: companyRef } : undefined,
-        match: match.application,
-        decision: 'accept',
-        reason:
-          match.application.chosen == null ? 'pick the application or switch to create' : undefined,
-      })
-    } else if (WANTS_APPLICATION.has(kind)) {
-      ops.push({
-        id: 'a1',
-        op: 'create_application',
-        args: {
-          role_title: clean(ex.role?.title) || '(role not stated)',
-          status: initialStatus(kind, ex.status_signal),
-        },
-        refs: companyRef ? { company_id: companyRef } : undefined,
-        decision: 'accept',
-        reason: 'no matching application — will create one',
-      })
-    } else {
-      // recruiter_outreach / status_update etc. with a named company but no app:
-      // offer a create, but skipped by default (event lands on the contact)
-      ops.push({
-        id: 'a1',
-        op: 'create_application',
-        args: { role_title: clean(ex.role?.title) || '(role not stated)', status: 'lead' },
-        refs: companyRef ? { company_id: companyRef } : undefined,
-        decision: 'skip',
-        reason: 'optional — only if you want to track this as an application',
-      })
-      appRef = null
-    }
-  }
-
-  // --- contact --------------------------------------------------
+  // --- contact (one, shared across every opportunity) ------------------
   let contactRef: string | null = null
   const senderEmail = clean(ex.sender?.email)
   const senderName = clean(ex.sender?.name)
@@ -291,6 +332,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
       })
     } else {
       const noReply = NO_REPLY.test(senderEmail)
+      const primaryCompanyRef = ops.find((o) => o.id === 'c1')
       ops.push({
         id: 'ct1',
         op: 'create_contact',
@@ -300,18 +342,38 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
           kind: agency ? 'recruiter' : String(ex.sender?.kind ?? 'other'),
           role: agency ? `Recruiter - ${clean(ex.sender?.org) || 'agency'}` : null,
         },
-        refs: companyKnown && !agency && companyRef ? { company_id: companyRef } : undefined,
+        refs: primaryCompanyRef && !agency ? { company_id: '$c1' } : undefined,
         decision: noReply ? 'skip' : 'accept',
         reason: noReply ? 'no-reply address — usually not worth a contact' : undefined,
       })
     }
   }
 
-  // --- event -----------------------------------------------------
-  const eventRefs: Record<string, string> = {}
-  if (appRef) eventRefs.application_id = appRef
-  if (contactRef) eventRefs.contact_id = contactRef
-  if (Object.keys(eventRefs).length > 0) {
+  // --- event(s) ---------------------------------------------------------
+  // one per opportunity that has an application, each on that application +
+  // the shared contact; if nothing got an application, one event on the
+  // contact alone so a bare recruiter note still lands somewhere.
+  const appEventRefs = appRefs
+    .map((appRef, i) => (appRef ? { i, appRef } : null))
+    .filter((v): v is { i: number; appRef: string } => v !== null)
+  if (appEventRefs.length > 0) {
+    appEventRefs.forEach(({ i, appRef }, order) => {
+      const refs: Record<string, string> = { application_id: appRef }
+      if (order === 0 && contactRef) refs.contact_id = contactRef
+      ops.push({
+        id: `e${i + 1}`,
+        op: 'add_event',
+        args: {
+          type: eventTypeFor(kind),
+          subtype: clean(ex.event?.subtype) || null,
+          body: clean(ex.event?.summary) || clean(ex.notes) || null,
+          occurred_at: clean(ex.event?.occurred_at) || null,
+        },
+        refs,
+        decision: 'accept',
+      })
+    })
+  } else if (contactRef) {
     ops.push({
       id: 'e1',
       op: 'add_event',
@@ -321,21 +383,24 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
         body: clean(ex.event?.summary) || clean(ex.notes) || null,
         occurred_at: clean(ex.event?.occurred_at) || null,
       },
-      refs: eventRefs,
+      refs: { contact_id: contactRef },
       decision: 'accept',
     })
   }
 
   // --- status change (only against an existing, linked application) --
-  const linkedApp = ops.find((o) => o.id === 'a1' && o.op === 'link_application')
-  if (linkedApp && appRef && ['rejection', 'offer', 'interview_invite', 'interview_scheduled', 'assessment_invite'].includes(kind)) {
-    ops.push({
-      id: 's1',
-      op: 'set_status',
-      args: { status: initialStatus(kind, ex.status_signal) },
-      refs: { application_id: appRef },
-      decision: 'accept',
-    })
+  if (['rejection', 'offer', 'interview_invite', 'interview_scheduled', 'assessment_invite'].includes(kind)) {
+    for (const [i, appRef] of appRefs.entries()) {
+      const linkedApp = ops.find((o) => o.id === `a${i + 1}` && o.op === 'link_application')
+      if (!linkedApp || !appRef) continue
+      ops.push({
+        id: `s${i + 1}`,
+        op: 'set_status',
+        args: { status: initialStatus(kind, ex.status_signal) },
+        refs: { application_id: appRef },
+        decision: 'accept',
+      })
+    }
   }
 
   return { status: 'needs_review', ops }

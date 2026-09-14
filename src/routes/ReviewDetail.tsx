@@ -237,6 +237,7 @@ function ExtractedPanel({ ex }: { ex: InboundExtracted }) {
     ['Status signal', ex.status_signal],
     ['Notes', ex.notes],
   ]
+  const extra = ex.additional_opportunities ?? []
   return (
     <div className="rounded-lg border border-gray-200 p-3 text-xs dark:border-gray-800">
       <div className="mb-1 font-medium text-gray-500">What the model read</div>
@@ -250,6 +251,21 @@ function ExtractedPanel({ ex }: { ex: InboundExtracted }) {
             </div>
           ))}
       </dl>
+      {extra.length > 0 && (
+        <>
+          <div className="mb-1 mt-2 font-medium text-gray-500">
+            + {extra.length} more {extra.length === 1 ? 'opportunity' : 'opportunities'} in this email
+          </div>
+          <ul className="list-disc space-y-0.5 pl-4 text-gray-700 dark:text-gray-300">
+            {extra.map((o, i) => (
+              <li key={i}>
+                {o.role.title || '(role not stated)'}
+                {o.hiring_company.withheld ? ' @ (withheld)' : o.hiring_company.name ? ` @ ${o.hiring_company.name}` : ''}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </div>
   )
 }

@@ -31,6 +31,17 @@ export type EmailKind = (typeof EMAIL_KINDS)[number]
 const nullableStr = z.string().trim().max(2000).nullish().transform((v) => v ?? null)
 const confidence = z.number().min(0).max(1).nullish().transform((v) => v ?? null)
 
+const opportunity = z
+  .object({
+    hiring_company: z
+      .object({ name: nullableStr, withheld: z.boolean().nullish().transform((v) => v ?? false), confidence })
+      .partial()
+      .passthrough(),
+    role: z.object({ title: nullableStr, confidence }).partial().passthrough(),
+  })
+  .partial()
+  .passthrough()
+
 export const extractedSchema = z
   .object({
     job_related: z.boolean().default(true),
@@ -64,6 +75,9 @@ export const extractedSchema = z
       .object({ title: nullableStr, confidence })
       .partial()
       .passthrough(),
+    /** rare: more than one distinct role/company covered by this one email
+     *  (see callback-worker/src/schemas.ts). `[]` normally. */
+    additional_opportunities: z.array(opportunity).nullish().transform((v) => v ?? []),
     event: z
       .object({
         type: nullableStr,

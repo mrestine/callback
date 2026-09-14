@@ -134,8 +134,8 @@ async function scenarioKnownCompanyRejection() {
   } as Extracted
 
   const match = await matchEntities(TEST_UID, ex, null)
-  check('company matched (chosen)', match.company.chosen === Number(co.id), match.company)
-  check('application matched (chosen)', match.application.chosen === Number(app.id), match.application)
+  check('company matched (chosen)', match.companies[0].chosen === Number(co.id), match.companies[0])
+  check('application matched (chosen)', match.applications[0].chosen === Number(app.id), match.applications[0])
 
   const { ops } = proposeOps(ex, match)
   check('has link_application', ops.some((o) => o.op === 'link_application' && o.match?.chosen === Number(app.id)))
@@ -179,7 +179,52 @@ async function scenarioThreadContinuity() {
     notes: 'Waiting.',
   } as Extracted
   const match = await matchEntities(TEST_UID, ex, tk)
-  check('thread continuity picked the prior application', match.application.chosen === Number(app.id), match.application)
+  check('thread continuity picked the prior application', match.applications[0].chosen === Number(app.id), match.applications[0])
+}
+
+async function scenarioMultiOpportunity() {
+  console.log('\n# agency recruiter, 3 distinct opportunities named -> 3x create_company + create_application')
+  const ex: Extracted = {
+    job_related: true,
+    email_kind: 'recruiter_outreach',
+    sender: { name: 'Scott Bennett', email: 'scott.bennett@motionrecruitment.com', org: 'Motion Recruitment', is_agency_recruiter: true, kind: 'recruiter', confidence: 0.85 },
+    hiring_company: { name: 'Encamp', withheld: false, confidence: 0.8 },
+    role: { title: 'Senior Platform Engineer', confidence: 0.8 },
+    additional_opportunities: [
+      { hiring_company: { name: 'Northstar', withheld: false, confidence: 0.8 }, role: { title: 'Staff Backend Engineer', confidence: 0.8 } },
+      { hiring_company: { name: 'Flex', withheld: false, confidence: 0.8 }, role: { title: 'Platform Engineer', confidence: 0.8 } },
+    ],
+    event: { type: 'email', subtype: null, occurred_at: null, summary: 'Matt decided to move forward on 3 of the 4 roles sent over.' },
+    status_signal: null,
+    notes: 'Pursuing 3 of the 4 roles.',
+  } as Extracted
+
+  const match = await matchEntities(TEST_UID, ex, null)
+  check('3 company matches computed', match.companies.length === 3, match.companies)
+  check('3 application matches computed', match.applications.length === 3, match.applications)
+
+  const { ops, status } = proposeOps(ex, match)
+  check('status is needs_review', status === 'needs_review')
+  const companyNames = ['Encamp', 'Northstar', 'Flex']
+  for (const name of companyNames) {
+    check(`has create_company "${name}"`, ops.some((o) => o.op === 'create_company' && o.args?.name === name))
+  }
+  const createApps = ops.filter((o) => o.op === 'create_application')
+  check('3 create_application ops, all accepted, all lead', createApps.length === 3 && createApps.every((o) => o.decision === 'accept' && o.args?.status === 'lead'), createApps)
+  check('has create_contact for Scott (accepted, no company link — agency)', ops.some((o) => o.op === 'create_contact' && o.decision === 'accept' && o.refs?.company_id === undefined))
+  const events = ops.filter((o) => o.op === 'add_event')
+  check('3 events, one per application, contact only on the first', events.length === 3 && events.filter((o) => o.refs?.contact_id).length === 1, events)
+
+  const iaId = await seedInbound(ex, null, '2026-09-14T09:10:00Z')
+  const { result } = await runApply(iaId, ops, '2026-09-14T09:10:00Z')
+  check('applied (ia_id returned)', result.ia_id != null, result)
+
+  const apps = await sql`select * from applications where user_id = ${TEST_UID} and inbound_action_id = ${iaId}`
+  check('all 3 applications created, status lead', apps.length === 3 && apps.every((a) => a.status === 'lead'), apps)
+  const cos = await sql`select * from companies where user_id = ${TEST_UID} and id = any(${apps.map((a) => a.company_id)})`
+  check('all 3 companies created, right names', cos.length === 3 && companyNames.every((n) => cos.some((c) => c.name === n)), cos)
+  const cts = await sql`select * from contacts where user_id = ${TEST_UID} and email = 'scott.bennett@motionrecruitment.com'`
+  check('recruiter contact created with company_id NULL (agency convention)', cts.length === 1 && cts[0].company_id === null, cts)
 }
 
 async function main() {
@@ -188,6 +233,7 @@ async function main() {
     await scenarioNewCompanyConfirmation()
     await scenarioKnownCompanyRejection()
     await scenarioThreadContinuity()
+    await scenarioMultiOpportunity()
   } finally {
     await reset()
   }

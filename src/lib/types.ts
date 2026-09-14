@@ -167,6 +167,7 @@ export interface InboundExtracted {
   sender: { name: string | null; email: string | null; org: string | null; is_agency_recruiter: boolean; kind: string }
   hiring_company: { name: string | null; withheld: boolean }
   role: { title: string | null }
+  additional_opportunities?: Array<{ hiring_company: { name: string | null; withheld: boolean }; role: { title: string | null } }>
   event: { type: string | null; subtype: string | null; occurred_at: string | null; summary: string | null }
   status_signal: string | null
   notes: string | null
