@@ -14,6 +14,11 @@ export function toDateInput(value: string | null | undefined): string {
   return d.toISOString().slice(0, 10)
 }
 
+/** An application is always "Company — Role", never the role alone. */
+export function applicationLabel(roleTitle: string, companyName: string | null | undefined): string {
+  return companyName ? `${companyName} — ${roleTitle}` : roleTitle
+}
+
 export function titleCase(s: string): string {
   return s.replace(/(^|[\s_-])(\w)/g, (_, sep, ch) => (sep === '_' || sep === '-' ? ' ' : sep) + ch.toUpperCase())
 }

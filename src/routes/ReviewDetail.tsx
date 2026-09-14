@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Autocomplete } from '../components/Autocomplete'
 import {
   Badge,
   Button,
@@ -13,8 +14,16 @@ import {
 } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
 import { formatDate, titleCase } from '../lib/format'
-import { useApplications, useInboundAction, useResolveInbound, type OpOverride } from '../lib/queries'
-import type { InboundExtracted, MatchCandidate, ProposalOp } from '../lib/types'
+import {
+  useApplicationOptions,
+  useApplications,
+  useCompanyOptions,
+  useContactOptions,
+  useInboundAction,
+  useResolveInbound,
+  type OpOverride,
+} from '../lib/queries'
+import type { AutocompleteOption, InboundExtracted, MatchCandidate, ProposalOp } from '../lib/types'
 
 const CREATE_OF: Record<string, string> = {
   link_company: 'create_company',
@@ -35,7 +44,7 @@ const OP_LABEL: Record<string, string> = {
 interface OpState {
   decision: 'accept' | 'skip'
   mode: 'link' | 'create'
-  chosen: number | null
+  chosen: AutocompleteOption | null
   args: Record<string, string>
 }
 
@@ -68,22 +77,7 @@ export function ReviewDetail() {
   const ops = useMemo(() => detail.data?.proposal ?? [], [detail.data])
   const [state, setState] = useState<Record<string, OpState> | null>(null)
 
-  // lazily seed local state once the proposal has loaded
-  const opState =
-    state ??
-    Object.fromEntries(
-      ops.map((op) => [
-        op.id,
-        {
-          decision: op.decision,
-          mode: op.op.startsWith('create_') ? 'create' : 'link',
-          chosen: op.match?.chosen ?? null,
-          args: initArgs(op, ex),
-        } as OpState,
-      ]),
-    )
-
-  // application candidates from older stored proposals (or an application
+  // AI match candidates from older stored proposals (or an application
   // matched with no company scoping) may not carry a company name in their
   // label — backfill it client-side from the live applications list so it
   // never depends on re-submitting the email.
@@ -101,6 +95,27 @@ export function ReviewDetail() {
     return name && !c.label.startsWith(name) ? `${name} — ${c.label}` : c.label
   }
 
+  // lazily seed local state once the proposal has loaded — a link op's initial
+  // `chosen` becomes a full {id,label} option (not just an id) so refLabels /
+  // the Autocomplete never need to re-derive a label from op.match.candidates.
+  const opState =
+    state ??
+    Object.fromEntries(
+      ops.map((op) => {
+        const isApplication = op.op.includes('application')
+        const cand = op.match?.candidates.find((c) => c.id === op.match?.chosen)
+        return [
+          op.id,
+          {
+            decision: op.decision,
+            mode: op.op.startsWith('create_') ? 'create' : 'link',
+            chosen: cand ? { id: cand.id, label: isApplication ? withCompany(cand) : cand.label } : null,
+            args: initArgs(op, ex),
+          } as OpState,
+        ]
+      }),
+    )
+
   // "→ where this is going" for every op, resolved from its CURRENT (possibly
   // reviewer-edited) state — a new company/application shows "new company: X",
   // a picked link shows the candidate's label. Keyed by op id so add_event and
@@ -113,13 +128,12 @@ export function ReviewDetail() {
       const kind = op.op.includes('company') ? 'company' : op.op.includes('application') ? 'application' : 'contact'
       if (s.mode === 'create') {
         out[op.id] = `new ${kind}: ${s.args.name || s.args.role_title || s.args.email || '(unnamed)'}`
-      } else {
-        const cand = op.match?.candidates.find((c) => c.id === s.chosen)
-        if (cand) out[op.id] = `${kind}: ${kind === 'application' ? withCompany(cand) : cand.label}`
+      } else if (s.chosen) {
+        out[op.id] = `${kind}: ${s.chosen.label}`
       }
     }
     return out
-  }, [ops, opState, companyByAppId])
+  }, [ops, opState])
 
   if (!Number.isInteger(id) || id <= 0) return <ErrorNote error={new Error('Invalid id')} />
   if (detail.isPending) return <Loading />
@@ -155,7 +169,7 @@ export function ReviewDetail() {
           ov.op = CREATE_OF[op.op]
           ov.args = pickCreateArgs(CREATE_OF[op.op], s.args)
         } else {
-          ov.chosen = s.chosen
+          ov.chosen = s.chosen?.id ?? null
         }
       } else if (op.op === 'create_company' || op.op === 'create_application' || op.op === 'create_contact') {
         ov.args = pickCreateArgs(op.op, s.args)
@@ -347,12 +361,18 @@ function OpCard({
   withCompany: (c: MatchCandidate) => string
 }) {
   const isLink = op.op.startsWith('link_')
+  const isCompany = op.op.includes('company')
   const isApplication = op.op.includes('application')
   const showCreateFields = (isLink && s.mode === 'create') || op.op.startsWith('create_')
   const createOp = op.op.startsWith('create_') ? op.op : CREATE_OF[op.op]
 
-  // candidates already come ordered by match confidence (backend), highest first
-  const candidates = isApplication ? [...(op.match?.candidates ?? [])].sort((a, b) => b.score - a.score) : op.match?.candidates ?? []
+  const useOptionsForOp = isCompany ? useCompanyOptions : isApplication ? useApplicationOptions : useContactOptions
+  // the AI's already-scored candidates (≤5), shown before the reviewer types
+  // anything; typing searches live across every company/contact/application,
+  // not just those top picks — sorted by confidence, highest first.
+  const seedOptions: AutocompleteOption[] = [...(op.match?.candidates ?? [])]
+    .sort((a, b) => b.score - a.score)
+    .map((c) => ({ id: c.id, label: isApplication ? withCompany(c) : c.label }))
 
   function target(refKey: string): string | null {
     const ref = op.refs?.[refKey]
@@ -388,22 +408,20 @@ function OpCard({
 
       {isLink && (
         <Field label="Match">
-          <SelectField
-            value={s.mode === 'create' ? '__create__' : (s.chosen ?? '')}
-            onChange={(e) => {
-              const v = e.target.value
-              if (v === '__create__') onChange({ mode: 'create' })
-              else onChange({ mode: 'link', chosen: v ? Number(v) : null })
-            }}
+          <Autocomplete
+            value={s.mode === 'create' ? null : s.chosen}
+            onChange={(opt) => onChange({ mode: 'link', chosen: opt })}
+            useOptions={useOptionsForOp}
+            seedOptions={seedOptions}
+            placeholder={`Search ${isCompany ? 'companies' : isApplication ? 'applications' : 'contacts'}…`}
+          />
+          <button
+            type="button"
+            className="mt-1 text-xs text-blue-600 hover:underline dark:text-blue-400"
+            onClick={() => onChange({ mode: 'create', chosen: null })}
           >
-            <option value="">— pick one —</option>
-            {candidates.map((c) => (
-              <option key={c.id} value={c.id}>
-                {isApplication ? withCompany(c) : c.label} ({c.score.toFixed(2)})
-              </option>
-            ))}
-            <option value="__create__">➕ Create new instead</option>
-          </SelectField>
+            ➕ Create new instead
+          </button>
         </Field>
       )}
 

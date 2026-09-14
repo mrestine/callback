@@ -52,7 +52,7 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
     join companies co on co.id = a.company_id
     left join contacts ct on ct.id = a.contact_id
     where a.user_id = ${uid}
-      and (${q}::text is null or a.role_title ilike '%' || ${q} || '%')
+      and (${q}::text is null or a.role_title ilike '%' || ${q} || '%' or co.name ilike '%' || ${q} || '%')
       and (${status}::text is null or a.status = ${status})
       and (${companyId}::int is null or a.company_id = ${companyId}::int)
     order by coalesce(a.applied_at, a.created_at::date) desc, a.id desc

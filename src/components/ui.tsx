@@ -7,7 +7,7 @@ import type {
   TextareaHTMLAttributes,
 } from 'react'
 
-const control =
+export const control =
   'w-full rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm shadow-sm outline-none ' +
   'focus:border-gray-500 dark:border-gray-700 dark:bg-gray-900'
 

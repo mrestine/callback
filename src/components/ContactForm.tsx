@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { CONTACT_KINDS, WARMTH_LEVELS } from '../schemas'
-import { useCompanies } from '../lib/queries'
+import { useCompanyOptions } from '../lib/queries'
 import type { ContactInput } from '../lib/queries'
+import type { AutocompleteOption } from '../lib/types'
 import { applyServerErrors, errorMessage } from '../lib/forms'
+import { Autocomplete } from './Autocomplete'
 import { Button, ErrorNote, Field, SelectField, TextArea, TextField } from './ui'
 
 const KIND_LABELS: Record<string, string> = {
@@ -14,29 +16,33 @@ const KIND_LABELS: Record<string, string> = {
   other: 'Other',
 }
 
+type FormValues = Omit<ContactInput, 'company_id'>
+
 export function ContactForm({
   defaultValues,
+  defaultCompany = null,
   onSubmit,
   onCancel,
   submitLabel = 'Save',
 }: {
-  defaultValues?: Partial<ContactInput>
+  defaultValues?: Partial<FormValues>
+  /** The currently-linked company, for edit mode — omit when creating. */
+  defaultCompany?: AutocompleteOption | null
   /** Should reject on failure so field errors can be surfaced. */
   onSubmit: (values: ContactInput) => Promise<unknown>
   onCancel?: () => void
   submitLabel?: string
 }) {
   const [formError, setFormError] = useState<string | null>(null)
-  const companies = useCompanies()
+  const [company, setCompany] = useState<AutocompleteOption | null>(defaultCompany)
   const {
     register,
     handleSubmit,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<ContactInput>({
+  } = useForm<FormValues>({
     defaultValues: {
       name: '',
-      company_id: '',
       role: '',
       kind: 'other',
       email: '',
@@ -51,7 +57,7 @@ export function ContactForm({
   const submit = handleSubmit(async (values) => {
     setFormError(null)
     try {
-      await onSubmit(values)
+      await onSubmit({ ...values, company_id: company ? String(company.id) : '' })
     } catch (err) {
       if (!applyServerErrors(err, setError)) setFormError(errorMessage(err))
     }
@@ -63,15 +69,8 @@ export function ContactForm({
         <Field label="Name" error={errors.name?.message}>
           <TextField autoFocus {...register('name', { required: 'Name is required' })} />
         </Field>
-        <Field label="Company" error={errors.company_id?.message}>
-          <SelectField {...register('company_id')}>
-            <option value="">— none —</option>
-            {companies.data?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </SelectField>
+        <Field label="Company">
+          <Autocomplete value={company} onChange={setCompany} useOptions={useCompanyOptions} placeholder="Search companies…" allowClear />
         </Field>
         <Field label="Role / title" error={errors.role?.message}>
           <TextField {...register('role')} />

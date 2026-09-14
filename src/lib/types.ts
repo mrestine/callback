@@ -46,8 +46,17 @@ export interface ApplicationSummary {
   id: number
   company_id: number
   role_title: string
+  /** present on list responses (joined) */
+  company_name?: string
   status: ApplicationStatus
   applied_at: string | null
+}
+
+/** One row in an <Autocomplete>'s dropdown. */
+export interface AutocompleteOption {
+  id: number
+  label: string
+  sublabel?: string | null
 }
 
 export interface Application {

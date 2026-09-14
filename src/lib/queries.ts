@@ -5,6 +5,7 @@ import type {
   Application,
   ApplicationDetail,
   ApplicationStatus,
+  AutocompleteOption,
   Company,
   CompanyDetail,
   Contact,
@@ -124,6 +125,12 @@ export function useDeleteCompany() {
   })
 }
 
+/** <Autocomplete> source for picking an existing company. */
+export function useCompanyOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
+  const companies = useCompanies(q)
+  return { data: companies.data?.map((c) => ({ id: c.id, label: c.name })), isLoading: companies.isLoading }
+}
+
 // --- contacts ------------------------------------------------------------
 export function useContacts(filters: ContactFilters) {
   return useQuery({
@@ -169,6 +176,15 @@ export function useDeleteContact() {
   })
 }
 
+/** <Autocomplete> source for picking an existing contact. */
+export function useContactOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
+  const contacts = useContacts({ q: q || undefined })
+  return {
+    data: contacts.data?.map((c) => ({ id: c.id, label: c.name, sublabel: c.company_name })),
+    isLoading: contacts.isLoading,
+  }
+}
+
 // --- applications ------------------------------------------------------
 /** An application mutation can change lists embedded in company / contact detail. */
 function invalidateApplicationViews(qc: ReturnType<typeof useQueryClient>, id?: number) {
@@ -177,6 +193,20 @@ function invalidateApplicationViews(qc: ReturnType<typeof useQueryClient>, id?: 
   qc.invalidateQueries({ queryKey: ['company'] })
   qc.invalidateQueries({ queryKey: ['contact'] })
   qc.invalidateQueries({ queryKey: ['dashboard'] })
+}
+
+/** <Autocomplete> source for picking an existing application — always shown
+ *  as "Company — Role", never role alone. */
+export function useApplicationOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
+  const applications = useApplications({ q: q || undefined })
+  return {
+    data: applications.data?.map((a) => ({
+      id: a.id,
+      label: `${a.company_name ?? '?'} — ${a.role_title}`,
+      sublabel: a.status,
+    })),
+    isLoading: applications.isLoading,
+  }
 }
 
 export function useApplications(filters: ApplicationFilters) {

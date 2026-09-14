@@ -60,10 +60,11 @@ async function getOne(res: VercelResponse, uid: number, id: number) {
     ? await sql`select * from companies where id = ${contact.company_id} and user_id = ${uid}`
     : [null]
   const applications = await sql`
-    select id, company_id, role_title, status, applied_at
-    from applications
-    where contact_id = ${id} and user_id = ${uid}
-    order by coalesce(applied_at, created_at::date) desc, id desc
+    select a.id, a.company_id, a.role_title, co.name as company_name, a.status, a.applied_at
+    from applications a
+    join companies co on co.id = a.company_id
+    where a.contact_id = ${id} and a.user_id = ${uid}
+    order by coalesce(a.applied_at, a.created_at::date) desc, a.id desc
   `
   const events = await sql`
     select * from events

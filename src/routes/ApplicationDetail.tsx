@@ -4,7 +4,7 @@ import { ApplicationForm } from '../components/ApplicationForm'
 import { Timeline } from '../components/Timeline'
 import { Badge, Button, ErrorNote, Field, Loading, PageHeader, SelectField } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
-import { formatDate, titleCase, toDateInput } from '../lib/format'
+import { applicationLabel, formatDate, titleCase, toDateInput } from '../lib/format'
 import { useApplication, useDeleteApplication, useUpdateApplication } from '../lib/queries'
 
 export function ApplicationDetail() {
@@ -24,7 +24,7 @@ export function ApplicationDetail() {
   const { application, company, contact, events } = detail.data
 
   function onDelete() {
-    if (!window.confirm(`Delete the ${application.role_title} application? Its timeline goes too.`)) return
+    if (!window.confirm(`Delete the ${applicationLabel(application.role_title, company?.name)} application? Its timeline goes too.`)) return
     del.mutate(id, { onSuccess: () => navigate('/applications') })
   }
 
@@ -37,7 +37,7 @@ export function ApplicationDetail() {
       <PageHeader
         title={
           <span className="flex items-center gap-2">
-            {application.role_title}
+            {applicationLabel(application.role_title, company?.name)}
             <Badge tone={application.status}>{titleCase(application.status)}</Badge>
           </span>
         }
@@ -64,8 +64,6 @@ export function ApplicationDetail() {
         <div className="mb-8 rounded-lg border border-gray-200 p-4 dark:border-gray-800">
           <ApplicationForm
             defaultValues={{
-              company_id: String(application.company_id),
-              contact_id: application.contact_id ? String(application.contact_id) : '',
               role_title: application.role_title,
               status: application.status,
               jd_url: application.jd_url ?? '',
@@ -76,6 +74,8 @@ export function ApplicationDetail() {
               applied_at: toDateInput(application.applied_at),
               notes: application.notes ?? '',
             }}
+            defaultCompany={company ? { id: company.id, label: company.name } : null}
+            defaultContact={contact ? { id: contact.id, label: contact.name } : null}
             submitLabel="Save changes"
             onCancel={() => setEditing(false)}
             onSubmit={(values) => update.mutateAsync(values).then(() => setEditing(false))}

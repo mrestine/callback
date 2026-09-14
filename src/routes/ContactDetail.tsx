@@ -3,7 +3,7 @@ import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ContactForm } from '../components/ContactForm'
 import { Timeline } from '../components/Timeline'
 import { Badge, Button, EmptyState, ErrorNote, Loading, PageHeader } from '../components/ui'
-import { formatDate, titleCase, toDateInput } from '../lib/format'
+import { applicationLabel, formatDate, titleCase, toDateInput } from '../lib/format'
 import { useContact, useDeleteContact, useUpdateContact } from '../lib/queries'
 
 export function ContactDetail() {
@@ -64,7 +64,6 @@ export function ContactDetail() {
           <ContactForm
             defaultValues={{
               name: contact.name,
-              company_id: contact.company_id ? String(contact.company_id) : '',
               role: contact.role ?? '',
               kind: contact.kind,
               email: contact.email ?? '',
@@ -73,6 +72,7 @@ export function ContactDetail() {
               notes: contact.notes ?? '',
               last_contact_at: toDateInput(contact.last_contact_at),
             }}
+            defaultCompany={company ? { id: company.id, label: company.name } : null}
             submitLabel="Save changes"
             onCancel={() => setEditing(false)}
             onSubmit={(values) => update.mutateAsync(values).then(() => setEditing(false))}
@@ -135,7 +135,7 @@ export function ContactDetail() {
             {applications.map((a) => (
               <li key={a.id} className="flex items-center justify-between px-3 py-2 text-sm">
                 <Link to={`/applications/${a.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
-                  {a.role_title}
+                  {applicationLabel(a.role_title, a.company_name)}
                 </Link>
                 <span className="flex items-center gap-3 text-gray-500">
                   <Badge tone={a.status}>{titleCase(a.status)}</Badge>

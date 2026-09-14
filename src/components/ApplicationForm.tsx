@@ -1,36 +1,45 @@
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { APPLICATION_STATUSES, REMOTE_MODES } from '../schemas'
-import { useCompanies, useContacts } from '../lib/queries'
+import { useCompanyOptions, useContactOptions } from '../lib/queries'
 import type { ApplicationInput } from '../lib/queries'
+import type { AutocompleteOption } from '../lib/types'
 import { applyServerErrors, errorMessage } from '../lib/forms'
 import { titleCase } from '../lib/format'
+import { Autocomplete } from './Autocomplete'
 import { Button, ErrorNote, Field, SelectField, TextArea, TextField } from './ui'
+
+type FormValues = Omit<ApplicationInput, 'company_id' | 'contact_id'>
 
 export function ApplicationForm({
   defaultValues,
+  defaultCompany = null,
+  defaultContact = null,
   onSubmit,
   onCancel,
   submitLabel = 'Save',
 }: {
-  defaultValues?: Partial<ApplicationInput>
+  defaultValues?: Partial<FormValues>
+  /** The currently-linked company/contact, for edit mode (so the field shows
+   *  a name instead of starting blank) — omit when creating. */
+  defaultCompany?: AutocompleteOption | null
+  defaultContact?: AutocompleteOption | null
   /** Should reject on failure so field errors can be surfaced. */
   onSubmit: (values: ApplicationInput) => Promise<unknown>
   onCancel?: () => void
   submitLabel?: string
 }) {
   const [formError, setFormError] = useState<string | null>(null)
-  const companies = useCompanies()
-  const contacts = useContacts({})
+  const [company, setCompany] = useState<AutocompleteOption | null>(defaultCompany)
+  const [companyError, setCompanyError] = useState<string | null>(null)
+  const [contact, setContact] = useState<AutocompleteOption | null>(defaultContact)
   const {
     register,
     handleSubmit,
     setError,
     formState: { errors, isSubmitting },
-  } = useForm<ApplicationInput>({
+  } = useForm<FormValues>({
     defaultValues: {
-      company_id: '',
-      contact_id: '',
       role_title: '',
       status: 'lead',
       jd_url: '',
@@ -46,8 +55,10 @@ export function ApplicationForm({
 
   const submit = handleSubmit(async (values) => {
     setFormError(null)
+    setCompanyError(company ? null : 'Company is required')
+    if (!company) return
     try {
-      await onSubmit(values)
+      await onSubmit({ ...values, company_id: String(company.id), contact_id: contact ? String(contact.id) : '' })
     } catch (err) {
       if (!applyServerErrors(err, setError)) setFormError(errorMessage(err))
     }
@@ -56,15 +67,8 @@ export function ApplicationForm({
   return (
     <form onSubmit={submit} className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Company" error={errors.company_id?.message}>
-          <SelectField {...register('company_id', { required: 'Company is required' })}>
-            <option value="">— select —</option>
-            {companies.data?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </SelectField>
+        <Field label="Company" error={companyError ?? undefined}>
+          <Autocomplete value={company} onChange={setCompany} useOptions={useCompanyOptions} placeholder="Search companies…" invalid={!!companyError} />
         </Field>
         <Field label="Role / title" error={errors.role_title?.message}>
           <TextField autoFocus {...register('role_title', { required: 'Role is required' })} />
@@ -81,16 +85,14 @@ export function ApplicationForm({
         <Field label="Applied on" error={errors.applied_at?.message}>
           <TextField type="date" {...register('applied_at')} />
         </Field>
-        <Field label="Contact" error={errors.contact_id?.message}>
-          <SelectField {...register('contact_id')}>
-            <option value="">— none —</option>
-            {contacts.data?.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-                {c.company_name ? ` · ${c.company_name}` : ''}
-              </option>
-            ))}
-          </SelectField>
+        <Field label="Contact">
+          <Autocomplete
+            value={contact}
+            onChange={setContact}
+            useOptions={useContactOptions}
+            placeholder="Search contacts…"
+            allowClear
+          />
         </Field>
         <Field label="Source" error={errors.source?.message} hint="referral, LinkedIn, cold…">
           <TextField {...register('source')} />

@@ -1,24 +1,25 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApplicationForm } from '../components/ApplicationForm'
+import { Autocomplete } from '../components/Autocomplete'
 import { Badge, Button, EmptyState, ErrorNote, Field, Loading, PageHeader, SelectField, TextField } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
 import { formatDate, titleCase } from '../lib/format'
-import { useApplications, useCompanies, useCreateApplication } from '../lib/queries'
+import { useApplications, useCompanyOptions, useCreateApplication } from '../lib/queries'
+import type { AutocompleteOption } from '../lib/types'
 
 export function Applications() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [q, setQ] = useState('')
   const [status, setStatus] = useState(searchParams.get('status') ?? '')
-  const [companyId, setCompanyId] = useState('')
+  const [company, setCompany] = useState<AutocompleteOption | null>(null)
   const [creating, setCreating] = useState(false)
 
-  const companies = useCompanies()
   const applications = useApplications({
     q: q || undefined,
     status: status || undefined,
-    company_id: companyId ? Number(companyId) : undefined,
+    company_id: company?.id,
   })
   const create = useCreateApplication()
 
@@ -67,16 +68,9 @@ export function Applications() {
             </SelectField>
           </Field>
         </div>
-        <div className="w-48">
+        <div className="w-56">
           <Field label="Company">
-            <SelectField value={companyId} onChange={(e) => setCompanyId(e.target.value)}>
-              <option value="">All</option>
-              {companies.data?.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </SelectField>
+            <Autocomplete value={company} onChange={setCompany} useOptions={useCompanyOptions} placeholder="All" />
           </Field>
         </div>
       </div>
@@ -87,7 +81,7 @@ export function Applications() {
         <ErrorNote error={applications.error} />
       ) : applications.data.length === 0 ? (
         <EmptyState>
-          {q || status || companyId ? 'No applications match those filters.' : 'No applications yet.'}
+          {q || status || company ? 'No applications match those filters.' : 'No applications yet.'}
         </EmptyState>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
