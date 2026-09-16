@@ -1,27 +1,48 @@
 import { useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApplicationForm } from '../components/ApplicationForm'
-import { Autocomplete } from '../components/Autocomplete'
-import { Badge, Button, EmptyState, ErrorNote, Field, Loading, PageHeader, SelectField, TextField } from '../components/ui'
+import { Badge, Button, control, EmptyState, ErrorNote, Field, Loading, PageHeader, Popover, TextField, ToggleBadge } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
 import { formatDate, titleCase } from '../lib/format'
-import { useApplications, useCompanyOptions, useCreateApplication } from '../lib/queries'
-import type { AutocompleteOption } from '../lib/types'
+import { useApplications, useCreateApplication } from '../lib/queries'
+
+/** Default filter: everything still live — excludes rejected / withdrawn / ghosted. */
+const DEFAULT_STATUSES = APPLICATION_STATUSES.filter(
+  (s) => s !== 'rejected' && s !== 'withdrawn' && s !== 'ghosted',
+)
+
+function sameStatusSet(a: string[], b: readonly string[]): boolean {
+  return a.length === b.length && b.every((s) => a.includes(s))
+}
 
 export function Applications() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [q, setQ] = useState('')
-  const [status, setStatus] = useState(searchParams.get('status') ?? '')
-  const [company, setCompany] = useState<AutocompleteOption | null>(null)
+  const [status, setStatus] = useState<string[]>(() => {
+    const fromUrl = searchParams.get('status')
+    return fromUrl ? fromUrl.split(',') : DEFAULT_STATUSES
+  })
   const [creating, setCreating] = useState(false)
 
-  const applications = useApplications({
-    q: q || undefined,
-    status: status || undefined,
-    company_id: company?.id,
-  })
+  const applications = useApplications({ q: q || undefined, status })
   const create = useCreateApplication()
+
+  function toggleStatus(s: string) {
+    setStatus((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))
+  }
+
+  const filtersActive = !!q || !sameStatusSet(status, DEFAULT_STATUSES)
+
+  const statusChips = (
+    <>
+      {APPLICATION_STATUSES.map((s) => (
+        <ToggleBadge key={s} tone={s} selected={status.includes(s)} onClick={() => toggleStatus(s)}>
+          {titleCase(s)}
+        </ToggleBadge>
+      ))}
+    </>
+  )
 
   return (
     <div>
@@ -53,24 +74,25 @@ export function Applications() {
       <div className="mb-3 flex flex-wrap gap-3">
         <div className="max-w-xs flex-1">
           <Field label="Search">
-            <TextField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Role title…" />
+            <TextField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Role, company, or contact…" />
           </Field>
         </div>
         <div className="w-40">
           <Field label="Status">
-            <SelectField value={status} onChange={(e) => setStatus(e.target.value)}>
-              <option value="">All</option>
-              {APPLICATION_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {titleCase(s)}
-                </option>
-              ))}
-            </SelectField>
-          </Field>
-        </div>
-        <div className="w-56">
-          <Field label="Company">
-            <Autocomplete value={company} onChange={setCompany} useOptions={useCompanyOptions} placeholder="All" />
+            <Popover
+              trigger={({ toggle }) => (
+                <button
+                  type="button"
+                  onClick={toggle}
+                  className={`${control} flex items-center justify-between text-left`}
+                >
+                  <span>Status ({status.length})</span>
+                  <span className="text-gray-400">▾</span>
+                </button>
+              )}
+            >
+              <div className="flex w-60 flex-wrap gap-1.5">{statusChips}</div>
+            </Popover>
           </Field>
         </div>
       </div>
@@ -81,7 +103,7 @@ export function Applications() {
         <ErrorNote error={applications.error} />
       ) : applications.data.length === 0 ? (
         <EmptyState>
-          {q || status || company ? 'No applications match those filters.' : 'No applications yet.'}
+          {filtersActive ? 'No applications match those filters.' : 'No applications yet.'}
         </EmptyState>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
@@ -90,6 +112,7 @@ export function Applications() {
               <tr>
                 <th className="px-3 py-2 font-medium">Role</th>
                 <th className="px-3 py-2 font-medium">Company</th>
+                <th className="px-3 py-2 font-medium">Contact</th>
                 <th className="px-3 py-2 font-medium">Status</th>
                 <th className="px-3 py-2 font-medium">Applied</th>
                 <th className="px-3 py-2 font-medium">Last activity</th>
@@ -107,6 +130,15 @@ export function Applications() {
                     <Link to={`/companies/${a.company_id}`} className="hover:underline">
                       {a.company_name}
                     </Link>
+                  </td>
+                  <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
+                    {a.contact_id ? (
+                      <Link to={`/contacts/${a.contact_id}`} className="hover:underline">
+                        {a.contact_name}
+                      </Link>
+                    ) : (
+                      <span className="text-gray-400">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <Badge tone={a.status}>{titleCase(a.status)}</Badge>

@@ -1,4 +1,4 @@
-import { forwardRef } from 'react'
+import { forwardRef, useEffect, useRef, useState } from 'react'
 import type {
   ButtonHTMLAttributes,
   InputHTMLAttributes,
@@ -131,4 +131,82 @@ const toneColor: Record<string, string> = {
 export function Badge({ children, tone }: { children: ReactNode; tone?: string }) {
   const cls = (tone && toneColor[tone]) || neutral
   return <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>{children}</span>
+}
+
+/** A clickable `Badge` — full tone color when selected, muted outline otherwise. Used for multi-select filters. */
+export function ToggleBadge({
+  children,
+  tone,
+  selected,
+  onClick,
+}: {
+  children: ReactNode
+  tone?: string
+  selected: boolean
+  onClick: () => void
+}) {
+  const cls = (tone && toneColor[tone]) || neutral
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={selected}
+      className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium transition-colors ${
+        selected
+          ? cls
+          : 'text-gray-400 ring-1 ring-inset ring-gray-300 hover:text-gray-600 dark:text-gray-500 dark:ring-gray-700 dark:hover:text-gray-300'
+      }`}
+    >
+      {children}
+    </button>
+  )
+}
+
+/**
+ * A trigger that opens a floating panel — closes on outside click, Escape, or
+ * triggering again. Stays open across clicks inside it (for multi-select
+ * panels); nothing auto-closes it for you.
+ */
+export function Popover({
+  trigger,
+  children,
+  align = 'left',
+}: {
+  trigger: (state: { open: boolean; toggle: () => void }) => ReactNode
+  children: ReactNode
+  align?: 'left' | 'right'
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function onDocClick(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      {trigger({ open, toggle: () => setOpen((v) => !v) })}
+      {open && (
+        <div
+          className={`absolute top-full z-20 mt-1 rounded-md border border-gray-200 bg-white p-2 shadow-lg dark:border-gray-800 dark:bg-gray-900 ${
+            align === 'right' ? 'right-0' : 'left-0'
+          }`}
+        >
+          {children}
+        </div>
+      )}
+    </div>
+  )
 }

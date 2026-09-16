@@ -66,7 +66,8 @@ export interface ApplicationInput {
 
 export interface ApplicationFilters {
   q?: string
-  status?: string
+  /** multi-select; joined into one comma-separated `?status=` param */
+  status?: string[]
   company_id?: number
 }
 
@@ -212,7 +213,10 @@ export function useApplicationOptions(q: string): { data?: AutocompleteOption[];
 export function useApplications(filters: ApplicationFilters) {
   return useQuery({
     queryKey: ['applications', filters],
-    queryFn: () => api.get<Application[]>(`/api/applications${qs({ ...filters })}`),
+    queryFn: () =>
+      api.get<Application[]>(
+        `/api/applications${qs({ q: filters.q, status: filters.status?.join(','), company_id: filters.company_id })}`,
+      ),
   })
 }
 

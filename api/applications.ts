@@ -39,7 +39,9 @@ async function refOwned(
 
 async function list(req: VercelRequest, res: VercelResponse, uid: number) {
   const q = qparam(req, 'q') ?? null
-  const status = qparam(req, 'status') ?? null
+  // comma-separated: ?status=lead,applied,screen — multi-select on the client
+  const statusParam = qparam(req, 'status') ?? null
+  const statuses = statusParam ? statusParam.split(',').filter(Boolean) : null
   const companyId = qparam(req, 'company_id') ?? null
   const rows = await sql`
     select a.*,
@@ -52,10 +54,17 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
     join companies co on co.id = a.company_id
     left join contacts ct on ct.id = a.contact_id
     where a.user_id = ${uid}
-      and (${q}::text is null or a.role_title ilike '%' || ${q} || '%' or co.name ilike '%' || ${q} || '%')
-      and (${status}::text is null or a.status = ${status})
+      and (${q}::text is null
+           or a.role_title ilike '%' || ${q} || '%'
+           or co.name ilike '%' || ${q} || '%'
+           or ct.name ilike '%' || ${q} || '%')
+      and (${statuses}::text[] is null or a.status = any(${statuses}))
       and (${companyId}::int is null or a.company_id = ${companyId}::int)
-    order by coalesce(a.applied_at, a.created_at::date) desc, a.id desc
+    order by
+      greatest(a.created_at,
+        coalesce((select max(created_at) from events e where e.application_id = a.id), a.created_at)
+      ) desc,
+      a.id desc
   `
   res.status(200).json(rows)
 }
