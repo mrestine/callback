@@ -4,7 +4,9 @@ import { requireAuth } from './_auth.js'
 import { methodNotAllowed, withErrors } from './_http.js'
 
 const ACTIVE = ['lead', 'applied', 'screen', 'onsite', 'offer']
-const STALE_DAYS = 10
+// "in process" for the dashboard summary sentence: past the initial application, still live
+const IN_PROCESS = ['screen', 'onsite', 'offer']
+const STALE_DAYS = 14
 
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
   const auth = requireAuth(req, res)
@@ -12,12 +14,22 @@ export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
   if (req.method !== 'GET') return methodNotAllowed(res, ['GET'])
   const { uid } = auth
 
-  const [summaryRows, stale, upcoming, recent] = await Promise.all([
+  const [summaryRows, inProcessCompanyRows, stale, upcoming, recent] = await Promise.all([
     sql`
       select count(*)::int as active_applications,
-             count(distinct company_id)::int as active_companies
+             count(distinct company_id)::int as active_companies,
+             count(*) filter (where status = any(${IN_PROCESS}))::int as in_process_count,
+             count(*) filter (where status = 'applied')::int as applied_count,
+             count(*) filter (where status = 'lead')::int as lead_count
       from applications
       where user_id = ${uid} and status = any(${ACTIVE})
+    `,
+    sql`
+      select distinct co.name
+      from applications a
+      join companies co on co.id = a.company_id
+      where a.user_id = ${uid} and a.status = any(${IN_PROCESS})
+      order by co.name
     `,
     sql`
       with act as (
@@ -67,13 +79,17 @@ export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
          left join contacts ct on ct.id = e.contact_id
          where e.user_id = ${uid} and e.status = 'logged')
       order by at desc
-      limit 20
+      limit 5
     `,
   ])
 
   res.status(200).json({
     activeApplications: summaryRows[0].active_applications,
     activeCompanies: summaryRows[0].active_companies,
+    inProcessCount: summaryRows[0].in_process_count,
+    inProcessCompanies: inProcessCompanyRows.map((r) => r.name as string),
+    appliedCount: summaryRows[0].applied_count,
+    leadCount: summaryRows[0].lead_count,
     staleThresholdDays: STALE_DAYS,
     stale,
     upcoming,

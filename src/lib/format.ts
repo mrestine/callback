@@ -27,6 +27,22 @@ export function applicationLabel(roleTitle: string, companyName: string | null |
   return companyName ? `${companyName} — ${roleTitle}` : roleTitle
 }
 
+/** 14 -> "2 weeks"; 10 -> "10 days"; 7 -> "1 week". */
+export function formatDuration(days: number): string {
+  if (days % 7 === 0) {
+    const weeks = days / 7
+    return `${weeks} week${weeks === 1 ? '' : 's'}`
+  }
+  return `${days} day${days === 1 ? '' : 's'}`
+}
+
+/** ["A"] -> "A"; ["A","B"] -> "A and B"; ["A","B","C"] -> "A, B, and C". */
+export function joinList(items: string[]): string {
+  if (items.length <= 1) return items[0] ?? ''
+  if (items.length === 2) return `${items[0]} and ${items[1]}`
+  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`
+}
+
 export function titleCase(s: string): string {
   return s.replace(/(^|[\s_-])(\w)/g, (_, sep, ch) => (sep === '_' || sep === '-' ? ' ' : sep) + ch.toUpperCase())
 }

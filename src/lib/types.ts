@@ -153,6 +153,14 @@ export interface ActivityItem {
 export interface DashboardData {
   activeApplications: number
   activeCompanies: number
+  /** status screen | onsite | offer */
+  inProcessCount: number
+  /** distinct company names among in-process applications, sorted */
+  inProcessCompanies: string[]
+  /** status applied */
+  appliedCount: number
+  /** status lead */
+  leadCount: number
   staleThresholdDays: number
   stale: StaleApplication[]
   upcoming: UpcomingEvent[]

@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { useDashboard } from '../lib/queries'
-import type { ActivityItem, UpcomingEvent } from '../lib/types'
+import type { ActivityItem, DashboardData, UpcomingEvent } from '../lib/types'
 import { Badge, EmptyState, ErrorNote, Loading } from '../components/ui'
 import { eventLabel } from '../components/Timeline'
-import { daysSince, formatDate, relativeDate, titleCase } from '../lib/format'
+import { daysSince, formatDate, formatDuration, formatShortDate, joinList, relativeDate, titleCase } from '../lib/format'
 
 export function Dashboard() {
   const { data, isPending, isError, error } = useDashboard()
@@ -11,29 +12,14 @@ export function Dashboard() {
   if (isPending) return <Loading />
   if (isError) return <ErrorNote error={error} />
 
-  const { activeApplications, activeCompanies, staleThresholdDays, stale, upcoming, recent } = data
+  const { stale, upcoming, recent } = data
 
   return (
     <div className="space-y-8">
       <section>
         <h2 className="text-lg font-semibold tracking-tight">Dashboard</h2>
-        <p className="mt-2 text-sm">
-          {activeApplications === 0 ? (
-            <span className="text-gray-500">
-              No active applications yet. <Link to="/applications" className="text-blue-600 hover:underline dark:text-blue-400">Add one →</Link>
-            </span>
-          ) : (
-            <>
-              <strong>{activeApplications}</strong> active application{activeApplications === 1 ? '' : 's'} at{' '}
-              <strong>{activeCompanies}</strong> compan{activeCompanies === 1 ? 'y' : 'ies'}
-              {stale.length > 0 && (
-                <>
-                  {' · '}
-                  <strong>{stale.length}</strong> stale (no activity in {staleThresholdDays}+ days)
-                </>
-              )}
-            </>
-          )}
+        <p className="mt-2 text-base">
+          <ActiveSummary data={data} />
         </p>
 
         {stale.length > 0 && (
@@ -60,13 +46,18 @@ export function Dashboard() {
         ) : (
           <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 text-sm dark:divide-gray-900 dark:border-gray-800">
             {upcoming.map((e) => (
-              <li key={e.id} className="flex items-center justify-between gap-3 px-3 py-2">
-                <span className="flex items-center gap-2">
-                  <span className="tabular-nums text-gray-500">{formatDate(e.occurred_at)}</span>
-                  <span>{eventLabel(e.type, e.subtype)}</span>
-                  {e.body && <span className="text-gray-500">— {e.body}</span>}
+              <li key={e.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3 py-2">
+                <span className="tabular-nums text-gray-500" title={formatDate(e.occurred_at)}>
+                  {formatShortDate(e.occurred_at)}
+                </span>
+                <span className="whitespace-nowrap text-gray-600 dark:text-gray-400">
+                  {e.company_name || <span className="text-gray-400">—</span>}
                 </span>
                 <UpcomingLink e={e} />
+                <span className="text-gray-500">
+                  {eventLabel(e.type, e.subtype)}
+                  {e.body && <> — {e.body}</>}
+                </span>
               </li>
             ))}
           </ul>
@@ -94,11 +85,90 @@ export function Dashboard() {
   )
 }
 
+/**
+ * The headline sentence(s). Each clause is built only when its count is > 0,
+ * so any combination (in-process only, waiting only, neither, both) still
+ * reads as a complete sentence.
+ */
+function ActiveSummary({ data }: { data: DashboardData }) {
+  const { activeApplications, inProcessCount, inProcessCompanies, appliedCount, leadCount, stale, staleThresholdDays } = data
+
+  if (activeApplications === 0) {
+    return (
+      <span className="text-gray-500">
+        No active applications yet.{' '}
+        <Link to="/applications" className="text-blue-600 hover:underline dark:text-blue-400">
+          Add one →
+        </Link>
+      </span>
+    )
+  }
+
+  const waitingClauses: ReactNode[] = []
+  if (appliedCount > 0) {
+    waitingClauses.push(
+      <>
+        <strong>{appliedCount}</strong> confirmed application{appliedCount === 1 ? '' : 's'} in waiting
+      </>,
+    )
+  }
+  if (leadCount > 0) {
+    waitingClauses.push(
+      <>
+        <strong>{leadCount}</strong> more on deck
+      </>,
+    )
+  }
+
+  const sentences: ReactNode[] = []
+  if (inProcessCount > 0) {
+    sentences.push(
+      <>
+        You&rsquo;ve got <strong>{inProcessCount}</strong> applications in process at {joinList(inProcessCompanies)}.
+      </>,
+    )
+  }
+  if (waitingClauses.length > 0) {
+    sentences.push(
+      <>
+        You&rsquo;ve got{' '}
+        {waitingClauses.length === 2 ? (
+          <>
+            {waitingClauses[0]}, and {waitingClauses[1]}
+          </>
+        ) : (
+          waitingClauses[0]
+        )}
+        .
+      </>,
+    )
+  }
+  if (stale.length > 0) {
+    sentences.push(
+      <span className="text-gray-500">
+        <strong>{stale.length}</strong> application{stale.length === 1 ? '' : 's'}{' '}
+        {stale.length === 1 ? "hasn't" : "haven't"} seen updates in {formatDuration(staleThresholdDays)}.
+      </span>,
+    )
+  }
+
+  return (
+    <>
+      {sentences.map((s, i) => (
+        <span key={i}>
+          {i > 0 && ' '}
+          {s}
+        </span>
+      ))}
+    </>
+  )
+}
+
 function UpcomingLink({ e }: { e: UpcomingEvent }) {
   if (e.application_id) {
     return (
       <Link to={`/applications/${e.application_id}`} className="whitespace-nowrap text-blue-600 hover:underline dark:text-blue-400">
-        {e.role_title} {e.company_name && <span className="text-gray-500">· {e.company_name}</span>}
+        {e.role_title}
       </Link>
     )
   }
