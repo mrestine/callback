@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type { EventRow } from '../lib/types'
-import { formatDate, titleCase, toDateInput } from '../lib/format'
+import { formatDate, formatShortDate, titleCase, toDateInput } from '../lib/format'
 import { EVENT_SUBTYPE_SUGGESTIONS, MANUAL_EVENT_TYPES } from '../schemas'
 import { useCreateEvent, useDeleteEvent, useUpdateEvent } from '../lib/queries'
 import { Badge, Button, EmptyState, ErrorNote, Field, SelectField, TextArea, TextField } from './ui'
@@ -95,38 +95,42 @@ function EventItem({ event: e, scope, editable }: { event: EventRow; scope: Scop
   }
 
   return (
-    <li className="group rounded-md border border-gray-200 px-3 py-2 dark:border-gray-800">
+    <li className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-800">
       <div className="flex items-center justify-between text-xs text-gray-500">
         <span className="flex items-center gap-1.5">
+          <span className="tabular-nums text-gray-400" title={formatDate(e.occurred_at)}>
+            {formatShortDate(e.occurred_at)}
+          </span>
           {eventLabel(e.type, e.subtype)}
           {e.status === 'scheduled' && <Badge tone="onsite">Scheduled</Badge>}
           {e.source === 'ai' && <Badge>AI</Badge>}
         </span>
-        <span className="flex items-center gap-2">
-          {formatDate(e.occurred_at)}
-          {canEdit && (
-            <span className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-              {e.status === 'scheduled' && (
-                <button
-                  onClick={() => update.mutate({ id: e.id, status: 'logged' })}
-                  className="hover:text-gray-900 dark:hover:text-gray-100"
-                >
-                  Mark done
-                </button>
-              )}
-              <button onClick={() => setEditing(true)} className="hover:text-gray-900 dark:hover:text-gray-100">
-                Edit
-              </button>
+        {canEdit && (
+          <span className="flex items-center gap-2">
+            {e.status === 'scheduled' && (
               <button
-                onClick={() => del.mutate({ id: e.id, ...scope })}
-                className="hover:text-red-600"
-                aria-label="Delete event"
+                onClick={() => update.mutate({ id: e.id, status: 'logged' })}
+                className="hover:text-gray-900 dark:hover:text-gray-100"
               >
-                ✕
+                Mark done
               </button>
-            </span>
-          )}
-        </span>
+            )}
+            <button onClick={() => setEditing(true)} className="hover:text-gray-900 dark:hover:text-gray-100">
+              Edit
+            </button>
+            <button
+              onClick={() => {
+                if (window.confirm(`Delete this ${eventLabel(e.type, e.subtype)} entry?`)) {
+                  del.mutate({ id: e.id, ...scope })
+                }
+              }}
+              className="hover:text-red-600"
+              aria-label="Delete event"
+            >
+              ✕
+            </button>
+          </span>
+        )}
       </div>
 
       {system && e.old_status && e.new_status && (

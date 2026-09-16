@@ -6,6 +6,14 @@ export function formatDate(value: string | null | undefined): string {
   return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
+/** ISO timestamp/date -> "9/16" (no year), or "" for null/invalid. */
+export function formatShortDate(value: string | null | undefined): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
+}
+
 /** A Date -> "yyyy-mm-dd" for <input type="date"> default values. */
 export function toDateInput(value: string | null | undefined): string {
   if (!value) return ''
