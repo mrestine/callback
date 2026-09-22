@@ -250,6 +250,38 @@ async function scenarioAllLinkedNoCompanyRef() {
   check('application.status -> screen', after?.status === 'screen', after)
 }
 
+async function scenarioAssessmentInviteDefaultsToTechnical() {
+  console.log('\n# assessment_invite, no explicit status_signal -> defaults to technical (not screen)')
+  // a unique company name — 'Encamp' is used by two other scenarios in this
+  // run and shares no reset() between scenarios, so reusing it here let
+  // fuzzy company matching resolve to THEIR application, not this one
+  // (the update silently landed on the wrong row instead of erroring).
+  const [co] = await sql`insert into companies (user_id, name) values (${TEST_UID}, 'Ravelin') returning *`
+  const [app] = await sql`
+    insert into applications (user_id, company_id, role_title, status)
+    values (${TEST_UID}, ${co.id}, 'Platform Engineer', 'applied') returning *
+  `
+  const ex: Extracted = {
+    job_related: true,
+    email_kind: 'assessment_invite',
+    sender: { name: 'Ravelin Recruiting', email: 'recruiting@ravelin.com', org: 'Ravelin', is_agency_recruiter: false, kind: 'recruiter', confidence: 0.9 },
+    hiring_company: { name: 'Ravelin', withheld: false, confidence: 0.9 },
+    role: { title: 'Platform Engineer', confidence: 0.9 },
+    event: { type: 'email', subtype: null, occurred_at: null, summary: 'Take-home technical assessment sent.' },
+    status_signal: null,
+    notes: null,
+  } as Extracted
+
+  const match = await matchEntities(TEST_UID, ex, null)
+  const { ops } = proposeOps(ex, match)
+  check('has set_status -> technical', ops.some((o) => o.op === 'set_status' && o.args?.status === 'technical'), ops)
+
+  const iaId = await seedInbound(ex, null, '2026-09-16T09:00:00Z')
+  await runApply(iaId, ops, '2026-09-16T09:00:00Z')
+  const [after] = await sql`select status from applications where id = ${app.id}`
+  check('application.status -> technical', after?.status === 'technical', after)
+}
+
 async function scenarioMultiOpportunity() {
   console.log('\n# agency recruiter, 3 distinct opportunities named -> 3x create_company + create_application')
   const ex: Extracted = {
@@ -304,6 +336,7 @@ async function main() {
     await scenarioKnownCompanyRejection()
     await scenarioThreadContinuity()
     await scenarioAllLinkedNoCompanyRef()
+    await scenarioAssessmentInviteDefaultsToTechnical()
     await scenarioMultiOpportunity()
   } finally {
     await reset()

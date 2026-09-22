@@ -3,9 +3,9 @@ import { sql } from './_db.js'
 import { requireAuth } from './_auth.js'
 import { methodNotAllowed, withErrors } from './_http.js'
 
-const ACTIVE = ['lead', 'applied', 'screen', 'onsite', 'offer']
+const ACTIVE = ['lead', 'applied', 'screen', 'technical', 'onsite', 'offer']
 // "in process" for the dashboard summary sentence: past the initial application, still live
-const IN_PROCESS = ['screen', 'onsite', 'offer']
+const IN_PROCESS = ['screen', 'technical', 'onsite', 'offer']
 const STALE_DAYS = 14
 
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {

@@ -201,8 +201,9 @@ const initialStatus = (kind: string, signal: string | null): Status => {
       return 'applied'
     case 'interview_invite':
     case 'interview_scheduled':
-    case 'assessment_invite':
       return 'screen'
+    case 'assessment_invite':
+      return 'technical'
     case 'offer':
       return 'offer'
     case 'rejection':
