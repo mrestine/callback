@@ -96,14 +96,6 @@ create index if not exists events_application_idx on events (application_id, occ
 create index if not exists events_contact_idx on events (contact_id, occurred_at desc);
 create index if not exists events_upcoming_idx on events (user_id, occurred_at) where status = 'scheduled';
 
--- ============================================================================
--- Phase 2 — AI email ingestion (see PHASE-2-PLAN.md)
---
--- `callback` stays source-agnostic: it never models email. The ingestion worker
--- POSTs an extracted structure to /api/inbound; callback matches it, compiles a
--- proposed set of ops, and parks it for human review. Nothing here says "email".
--- ============================================================================
-
 -- fuzzy company / role name matching in /api/inbound (similarity(), % operator)
 create extension if not exists pg_trgm;
 
@@ -119,12 +111,12 @@ create table if not exists api_tokens (
 );
 create index if not exists api_tokens_user_idx on api_tokens (user_id);
 
--- one row per worker submission: dedup key + audit trail + review item.
+-- one row per worker submission: dedupe key + audit trail + review item.
 create table if not exists inbound_actions (
   id            bigint generated always as identity primary key,
   user_id       bigint not null references users (id) on delete cascade,
   source        text not null,                -- opaque, e.g. 'gmail-worker'
-  external_ref  text not null,                -- opaque dedup key from the worker
+  external_ref  text not null,                -- opaque dedupe key from the worker
   occurred_at   timestamptz,                  -- when the underlying thing happened
   summary       text,                         -- human-readable, from the worker
   payload       jsonb,                        -- full submit body (extracted + thread_key), verbatim

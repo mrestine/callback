@@ -1,5 +1,5 @@
 /**
- * Phase 2 — the matching / proposal / apply logic behind /api/inbound.
+ * The matching / proposal / apply logic behind /api/inbound.
  *
  * `callback` never models email. Input here is the worker's extracted structure
  * (`Extracted`); output is a `proposal` — an ordered list of typed ops the
@@ -43,7 +43,7 @@ function opportunitiesOf(ex: Extracted): Opportunity[] {
 }
 
 // --------------------------------------------------------------------------
-// 5. Match  (deterministic + SQL, no model)
+// Match  (deterministic + SQL, no model)
 // --------------------------------------------------------------------------
 export async function matchEntities(
   uid: number,
@@ -190,7 +190,7 @@ async function matchApplication(
 }
 
 // --------------------------------------------------------------------------
-// 6. Propose  (rules over match + email_kind; builds ops, writes nothing)
+// Propose  (rules over match + email_kind; builds ops, writes nothing)
 // --------------------------------------------------------------------------
 const NO_REPLY = /(^|[._-])(no-?reply|donotreply|notifications?)@/i
 
@@ -416,7 +416,7 @@ export function needsDisambiguation(ops: ProposalOp[]): boolean {
 }
 
 // --------------------------------------------------------------------------
-// 7. Apply  (one atomic statement: WITH <op ctes>, _ia update RETURNING ids)
+// Apply  (one atomic statement: WITH <op ctes>, _ia update RETURNING ids)
 // --------------------------------------------------------------------------
 const statusForDate = (d: Date | null): 'scheduled' | 'logged' =>
   d && d.getTime() > Date.now() ? 'scheduled' : 'logged'

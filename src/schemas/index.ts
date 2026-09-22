@@ -2,8 +2,7 @@ import { z } from 'zod'
 
 /**
  * Shared validation schemas — imported by the React forms (via zodResolver) and
- * by the /api handlers to validate request bodies. Keep this file free of any
- * React or Node imports so both sides can use it.
+ * by the /api handlers to validate request bodies. No React / Node imports here.
  *
  * Optional fields use `z.preprocess` to fold empty strings / null (what HTML
  * form controls and omitted JSON keys produce) down to `undefined` before the
@@ -139,5 +138,5 @@ export type ContactCreate = z.infer<typeof contactCreate>
 export type ApplicationCreate = z.infer<typeof applicationCreate>
 export type EventCreate = z.infer<typeof eventCreate>
 
-// --- Phase 2 — AI inbound ingestion ----------------------------------
+// --- AI inbound ingestion --------------------------------------------
 export * from './inbound.js'

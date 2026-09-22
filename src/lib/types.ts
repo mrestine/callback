@@ -167,7 +167,7 @@ export interface DashboardData {
   recent: ActivityItem[]
 }
 
-// --- Phase 2 — AI inbound review ------------------------------------
+// --- AI inbound review ----------------------------------------------
 export type InboundStatus =
   | 'pending'
   | 'needs_review'

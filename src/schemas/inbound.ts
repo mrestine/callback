@@ -2,11 +2,9 @@ import { z } from 'zod'
 import { APPLICATION_STATUSES, CONTACT_KINDS } from './index.js'
 
 /**
- * Phase 2 — the /api/inbound contract. Shared by the API handlers and the
- * review UI. No React / Node imports (see index.ts).
+ * Shared by the API handlers and the review UI. No React / Node imports (see index.ts).
  *
- * `callback` is source-agnostic: this is "a suggested change from the ingestion
- * worker", never "an email". The worker owns the extraction shape; callback
+ * `callback` is source-agnostic. The worker owns the extraction shape; callback
  * validates it leniently (the worker already grammar-constrains its model) and
  * treats unknown fields as harmless.
  */

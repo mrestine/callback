@@ -120,7 +120,7 @@ export function ReviewDetail() {
       }),
     )
 
-  // "→ where this is going" for every op, resolved from its CURRENT (possibly
+  // "where this is going" for every op, resolved from its CURRENT (possibly
   // reviewer-edited) state — a new company/application shows "new company: X",
   // a picked link shows the candidate's label. Keyed by op id so add_event and
   // create/link_application can point at it via refs.

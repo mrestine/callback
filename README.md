@@ -1,8 +1,9 @@
 # callback
 
 Multi-user job-application tracker — contacts, companies, applications, and a
-per-application event timeline. React + Vite SPA, Vercel serverless functions,
-Neon Postgres. See [PHASE-1-PLAN.md](./PHASE-1-PLAN.md) for the full design.
+per-application event timeline. React + Vite SPA, Vercel serverless functions, Neon Postgres.
+
+This works just fine on its own, but it's enhanced by the [callback-worker](https://github.com/mrestine/callback-worker), which can generate change proposals from emails. For more details, see that repo or check out the full [Development Outline](./development-outline.md).
 
 ## Local development
 

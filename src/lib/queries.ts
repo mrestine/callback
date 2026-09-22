@@ -321,7 +321,7 @@ export function useDashboard() {
   })
 }
 
-// --- Phase 2: AI inbound review ----------------------------------
+// --- AI inbound review -------------------------------------------
 /** Per-op override sent to POST /api/inbound/resolve. */
 export interface OpOverride {
   decision?: 'accept' | 'skip'
@@ -376,7 +376,7 @@ export function useResolveInbound() {
   })
 }
 
-// --- Phase 2: worker API tokens (Settings) --------------------
+// --- worker API tokens (Settings) -----------------------------
 export function useTokens() {
   return useQuery({
     queryKey: ['tokens'],
