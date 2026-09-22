@@ -65,6 +65,7 @@ function EventItem({ event: e, scope, editable }: { event: EventRow; scope: Scop
   const canEdit = editable && !system
 
   if (editing) {
+    const originalDateInput = toDateInput(e.occurred_at)
     return (
       <li className="rounded-md border border-gray-200 px-3 py-2 dark:border-gray-800">
         <EventFields
@@ -72,7 +73,7 @@ function EventItem({ event: e, scope, editable }: { event: EventRow; scope: Scop
             type: e.type,
             subtype: e.subtype ?? '',
             body: e.body ?? '',
-            occurredAt: toDateInput(e.occurred_at),
+            occurredAt: originalDateInput,
           }}
           pending={update.isPending}
           error={update.error}
@@ -84,7 +85,11 @@ function EventItem({ event: e, scope, editable }: { event: EventRow; scope: Scop
                 type: v.type,
                 subtype: v.subtype || undefined,
                 body: v.body || undefined,
-                occurred_at: v.occurredAt || undefined,
+                // Only resend occurred_at if the date was actually changed —
+                // the date-only input would otherwise clobber the original
+                // time-of-day on every unrelated edit, silently reordering
+                // same-day events in the timeline.
+                occurred_at: v.occurredAt !== originalDateInput ? v.occurredAt || undefined : undefined,
               },
               { onSuccess: () => setEditing(false) },
             )
