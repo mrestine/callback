@@ -47,9 +47,9 @@ Since I wasn’t paying for cloud usage of the worker and didn't have to worry a
 It’s all relatively straightforward, but I had to navigate a few trapdoors that popped up. Most of these cases involved tuning the model prompts to get the desired outputs, but some included changing the contract between the worker and Callback. Some were as simple as adding a new Application status which involved matching updates in the app and the worker, but other issues were more complicated like dealing with a recruiter email that included multiple job descriptions.
 
 ## Diagram
-![Excalidraw architecture diagram](https://github.com/user-attachments/assets/aeef7d95-d839-4a13-a6b1-845ed846a68d)
+<img width="933" height="617" alt="Excalidraw architecture diagram" src="https://github.com/user-attachments/assets/fe2d452a-e445-4801-9c35-f21e675ad8f1" />
 
-[Excalidraw link](https://excalidraw.com/#json=n_JN0NZ2ERJot19Aa5aJo,Z1NvdiWTdiMZcNLjvlRUOA)
+[Excalidraw link](https://excalidraw.com/#json=YIXyRAKI_Bp-bxJOIdcNj,-EeH9ZeFL3ocWfGp5AK7HQ)
 
 ## The Present
 
