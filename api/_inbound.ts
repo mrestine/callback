@@ -12,7 +12,9 @@ import type {
   MatchCandidate,
   ProposalOp,
 } from '../src/schemas/index.js'
-import { APPLICATION_STATUSES } from '../src/schemas/index.js'
+import { APPLICATION_STATUSES, dateOnlyToInstant, instantToLocalDateOnly } from '../src/schemas/index.js'
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 
 type Status = (typeof APPLICATION_STATUSES)[number]
 const INACTIVE: Status[] = ['rejected', 'withdrawn', 'ghosted']
@@ -526,7 +528,7 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         const appliedAtInput = clean(A('applied_at') as string)
         const appliedAt =
           appliedAtInput ||
-          (st !== 'lead' && ctx.fallbackOccurredAt ? ctx.fallbackOccurredAt.toISOString().slice(0, 10) : null)
+          (st !== 'lead' && ctx.fallbackOccurredAt ? instantToLocalDateOnly(ctx.fallbackOccurredAt) : null)
         ctes.push(
           `op_${op.id} as (insert into applications ` +
             `(user_id, company_id, role_title, status, jd_url, source, location, remote, salary_range, applied_at, notes, inbound_action_id) ` +
@@ -544,7 +546,11 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         const ctExpr = refExpr(op.refs?.contact_id)
         if (!appExpr && !ctExpr) break // nothing to attach it to
         const rawWhen = clean(A('occurred_at') as string)
-        const when = rawWhen ? new Date(rawWhen) : ctx.fallbackOccurredAt
+        // the model sometimes gives a bare date with no time (e.g. "let's go
+        // for it Thursday" with no clock time) — never let that fall through
+        // to new Date()'s UTC-midnight parsing, same reasoning as schemas/
+        // index.ts's dateOnlyToInstant.
+        const when = rawWhen ? new Date(DATE_ONLY.test(rawWhen) ? dateOnlyToInstant(rawWhen) : rawWhen) : ctx.fallbackOccurredAt
         const whenValid = when && !Number.isNaN(when.getTime()) ? when : ctx.fallbackOccurredAt
         ctes.push(
           `op_${op.id} as (insert into events ` +

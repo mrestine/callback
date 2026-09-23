@@ -13,11 +13,70 @@ import { z } from 'zod'
 const trimmed = z.string().trim()
 const emptyToUndefined = (v: unknown) => (v === '' || v === null ? undefined : v)
 
+/**
+ * Single-operator app, so a fixed timezone stands in for "the operator's
+ * local time" wherever server-side code (no browser, no per-request
+ * timezone) needs one. Used only as a last resort — see dateOnlyToInstant.
+ */
+export const OPERATOR_TZ = 'America/New_York'
+
+function tzOffsetHours(date: Date, timeZone: string): number {
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone, timeZoneName: 'shortOffset' })
+  const part = fmt.formatToParts(date).find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+0'
+  const m = part.match(/GMT([+-]\d+(?:\.\d+)?)/)
+  return m ? Number(m[1]) : 0
+}
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+
+/**
+ * "yyyy-mm-dd" -> ISO instant at OPERATOR_TZ local midnight of that date
+ * (DST-aware). A bare date has no time-of-day; parsing it with `new Date()`
+ * (or z.coerce.date()) gives UTC midnight, which then renders as the
+ * PREVIOUS calendar day for any timezone behind UTC — never do that. The
+ * browser client independently sends local midnight in the viewer's OWN
+ * timezone when it has one (see dateInputToInstant in src/lib/format.ts,
+ * more accurate since it's the real viewer, not a hardcoded stand-in); this
+ * is the systemic backstop for anything that reaches a date field as a bare
+ * date without going through that — the AI extraction pipeline, a future
+ * API caller, etc.
+ */
+export function dateOnlyToInstant(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  const utcMidnight = Date.UTC(y, m - 1, d)
+  const offset = tzOffsetHours(new Date(utcMidnight), OPERATOR_TZ)
+  return new Date(utcMidnight - offset * 3_600_000).toISOString()
+}
+
+/** The inverse direction: a real instant -> OPERATOR_TZ's calendar date, as
+ *  "yyyy-mm-dd". For deriving a date-only value (e.g. applied_at) from a
+ *  genuine timestamp server-side — never `.toISOString().slice(0, 10)`,
+ *  which takes UTC's calendar date and is off by one for part of the day. */
+export function instantToLocalDateOnly(date: Date): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: OPERATOR_TZ,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(date)
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? ''
+  return `${get('year')}-${get('month')}-${get('day')}`
+}
+
+/** Folds empty strings/null to undefined, AND promotes a bare "yyyy-mm-dd"
+ *  string to an OPERATOR_TZ-local-midnight instant before z.coerce.date()
+ *  ever sees it — so no caller of a date field can accidentally end up at
+ *  UTC midnight just by sending a plain date. */
+const dateOnlySafe = (v: unknown) => {
+  const folded = emptyToUndefined(v)
+  return typeof folded === 'string' && DATE_ONLY.test(folded) ? dateOnlyToInstant(folded) : folded
+}
+
 const optionalText = z.preprocess(emptyToUndefined, trimmed.max(10_000).optional())
 const optionalUrl = z.preprocess(emptyToUndefined, trimmed.max(2048).url().optional())
 const optionalEmail = z.preprocess(emptyToUndefined, trimmed.max(320).email().optional())
 const optionalId = z.preprocess(emptyToUndefined, z.coerce.number().int().positive().optional())
-const optionalDate = z.preprocess(emptyToUndefined, z.coerce.date().optional())
+const optionalDate = z.preprocess(dateOnlySafe, z.coerce.date().optional())
 
 // --- enums ---------------------------------------------------------------
 export const CONTACT_KINDS = ['friend', 'recruiter', 'hiring_mgr', 'referral', 'other'] as const

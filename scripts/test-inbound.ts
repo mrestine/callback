@@ -282,6 +282,44 @@ async function scenarioAssessmentInviteDefaultsToTechnical() {
   check('application.status -> technical', after?.status === 'technical', after)
 }
 
+async function scenarioBareDateEventNeverUtcMidnight() {
+  console.log('\n# model gives a bare date (no time) for event.occurred_at -> never stored at UTC midnight')
+  const [co] = await sql`insert into companies (user_id, name) values (${TEST_UID}, 'Halcyon') returning *`
+  const [app] = await sql`
+    insert into applications (user_id, company_id, role_title, status)
+    values (${TEST_UID}, ${co.id}, 'Staff Engineer', 'screen') returning *
+  `
+  const ex: Extracted = {
+    job_related: true,
+    email_kind: 'interview_scheduled',
+    sender: { name: 'Zoe Fairweather', email: 'zoe.fairweather@halcyon.com', org: 'Halcyon', is_agency_recruiter: false, kind: 'recruiter', confidence: 0.9 },
+    hiring_company: { name: 'Halcyon', withheld: false, confidence: 0.9 },
+    role: { title: 'Staff Engineer', confidence: 0.9 },
+    // the model sometimes states a day with no clock time ("let's do Thursday")
+    event: { type: 'interview', subtype: 'Recruiter screen', occurred_at: '2026-05-14', summary: 'Screen scheduled for Thursday.' },
+    status_signal: null,
+    notes: null,
+  } as Extracted
+
+  const match = await matchEntities(TEST_UID, ex, null)
+  const { ops } = proposeOps(ex, match)
+  const iaId = await seedInbound(ex, null, '2026-05-11T09:00:00Z')
+  await runApply(iaId, ops, '2026-05-11T09:00:00Z')
+
+  const [ev] = await sql`select occurred_at from events where application_id = ${app.id} order by id desc limit 1`
+  check('event stored (bare-date occurred_at survived)', !!ev, ev)
+  check(
+    'occurred_at is NOT UTC midnight (the old bug\'s signature)',
+    ev && new Date(ev.occurred_at).toISOString().slice(11) !== '00:00:00.000Z',
+    ev?.occurred_at,
+  )
+  check(
+    'occurred_at still resolves to the right calendar date (May 14, local)',
+    ev && new Date(ev.occurred_at).toISOString().slice(0, 10) === '2026-05-14',
+    ev?.occurred_at,
+  )
+}
+
 async function scenarioMultiOpportunity() {
   console.log('\n# agency recruiter, 3 distinct opportunities named -> 3x create_company + create_application')
   const ex: Extracted = {
@@ -337,6 +375,7 @@ async function main() {
     await scenarioThreadContinuity()
     await scenarioAllLinkedNoCompanyRef()
     await scenarioAssessmentInviteDefaultsToTechnical()
+    await scenarioBareDateEventNeverUtcMidnight()
     await scenarioMultiOpportunity()
   } finally {
     await reset()

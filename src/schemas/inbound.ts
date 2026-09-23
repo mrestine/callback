@@ -1,5 +1,12 @@
 import { z } from 'zod'
-import { APPLICATION_STATUSES, CONTACT_KINDS } from './index.js'
+import { APPLICATION_STATUSES, CONTACT_KINDS, dateOnlyToInstant } from './index.js'
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
+/** Promotes a bare "yyyy-mm-dd" to a local-midnight instant before
+ *  z.coerce.date() runs — see dateOnlyToInstant in index.ts. The worker
+ *  always sends a full timestamp for this field in practice, but nothing
+ *  here should silently fall back to UTC midnight if that ever isn't true. */
+const dateOnlySafe = (v: unknown) => (typeof v === 'string' && DATE_ONLY.test(v) ? dateOnlyToInstant(v) : v)
 
 /**
  * Shared by the API handlers and the review UI. No React / Node imports (see index.ts).
@@ -99,7 +106,7 @@ export type Extracted = z.infer<typeof extractedSchema>
 export const inboundSubmit = z.object({
   external_ref: z.string().trim().min(1).max(400),
   source: z.string().trim().min(1).max(100),
-  occurred_at: z.coerce.date().nullish().transform((v) => v ?? null),
+  occurred_at: z.preprocess(dateOnlySafe, z.coerce.date().nullish()).transform((v) => v ?? null),
   summary: z.string().trim().max(4000).nullish().transform((v) => v ?? null),
   thread_key: z.string().trim().max(500).nullish().transform((v) => v ?? null),
   extracted: extractedSchema,
