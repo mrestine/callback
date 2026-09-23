@@ -45,6 +45,10 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
   const companyId = qparam(req, 'company_id') ?? null
   const rows = await sql`
     select a.*,
+      -- applied_at is a plain date column (no timezone); overriding the a.*
+      -- copy with an explicit ::text cast avoids the driver deserializing it
+      -- back into a JS Date at some ambiguous midnight and shifting the day
+      a.applied_at::text as applied_at,
       co.name as company_name,
       ct.name as contact_name,
       -- "last activity" = when something was last recorded, not when a future
@@ -71,7 +75,7 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
 
 async function getOne(res: VercelResponse, uid: number, id: number) {
   const [application] = await sql`
-    select * from applications where id = ${id} and user_id = ${uid}
+    select *, applied_at::text as applied_at from applications where id = ${id} and user_id = ${uid}
   `
   if (!application) return void res.status(404).json({ error: 'not found' })
 
@@ -108,7 +112,7 @@ async function create(req: VercelRequest, res: VercelResponse, uid: number) {
        ${data.jd_url ?? null}, ${data.source ?? null}, ${data.status},
        ${data.location ?? null}, ${data.remote ?? null}, ${data.salary_range ?? null},
        ${data.applied_at ?? null}, ${data.notes ?? null})
-    returning *
+    returning *, applied_at::text as applied_at
   `
   res.status(201).json(row)
 }
@@ -137,7 +141,7 @@ async function update(req: VercelRequest, res: VercelResponse, uid: number, id: 
     sql(
       `update applications set ${setSql}, updated_at = now()
        where id = $${entries.length + 1} and user_id = $${entries.length + 2}
-       returning *`,
+       returning *, applied_at::text as applied_at`,
       [...params, id, uid],
     )
 

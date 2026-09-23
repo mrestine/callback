@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { CompanyForm } from '../components/CompanyForm'
 import { Badge, Button, EmptyState, ErrorNote, Loading, PageHeader } from '../components/ui'
-import { applicationLabel, formatDate, titleCase } from '../lib/format'
+import { applicationLabel, formatDate, formatDateOnly, titleCase } from '../lib/format'
 import { useCompany, useDeleteCompany, useUpdateCompany } from '../lib/queries'
 
 export function CompanyDetail() {
@@ -126,7 +126,7 @@ export function CompanyDetail() {
                 </Link>
                 <span className="flex items-center gap-3 text-gray-500">
                   <Badge tone={a.status}>{titleCase(a.status)}</Badge>
-                  {a.applied_at && <span>{formatDate(a.applied_at)}</span>}
+                  {a.applied_at && <span>{formatDateOnly(a.applied_at)}</span>}
                 </span>
               </li>
             ))}

@@ -13,7 +13,7 @@ import {
   TextField,
 } from '../components/ui'
 import { APPLICATION_STATUSES, CONTACT_KINDS, REMOTE_MODES, WARMTH_LEVELS } from '../schemas'
-import { formatDate, titleCase, toDateInput } from '../lib/format'
+import { formatDate, titleCase, toDateInput, todayInput } from '../lib/format'
 import {
   useApplicationOptions,
   useApplications,
@@ -465,8 +465,7 @@ function OpCard({
                     const status = e.target.value
                     // switching to a non-lead status implies applying already
                     // happened — default the date to today if nothing's set
-                    const applied_at =
-                      s.args.applied_at || (status !== 'lead' ? new Date().toISOString().slice(0, 10) : '')
+                    const applied_at = s.args.applied_at || (status !== 'lead' ? todayInput() : '')
                     onChange({ args: { ...s.args, status, applied_at } })
                   }}
                 >

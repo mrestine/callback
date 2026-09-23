@@ -54,7 +54,7 @@ async function getOne(res: VercelResponse, uid: number, id: number) {
     order by name asc
   `
   const applications = await sql`
-    select id, company_id, role_title, status, applied_at
+    select id, company_id, role_title, status, applied_at::text as applied_at
     from applications
     where company_id = ${id} and user_id = ${uid}
     order by coalesce(applied_at, created_at::date) desc, id desc

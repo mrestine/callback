@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { ApplicationForm } from '../components/ApplicationForm'
 import { Badge, Button, control, EmptyState, ErrorNote, Field, Loading, PageHeader, Popover, TextField, ToggleBadge } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
-import { formatDate, titleCase } from '../lib/format'
+import { formatDate, formatDateOnly, titleCase } from '../lib/format'
 import { useApplications, useCreateApplication } from '../lib/queries'
 
 /** Default filter: everything still live — excludes rejected / withdrawn / ghosted. */
@@ -144,7 +144,7 @@ export function Applications() {
                     <Badge tone={a.status}>{titleCase(a.status)}</Badge>
                   </td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
-                    {formatDate(a.applied_at) || <span className="text-gray-400">—</span>}
+                    {formatDateOnly(a.applied_at) || <span className="text-gray-400">—</span>}
                   </td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
                     {formatDate(a.last_event_at) || <span className="text-gray-400">—</span>}

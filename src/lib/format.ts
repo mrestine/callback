@@ -39,6 +39,42 @@ export function dateInputToInstant(dateStr: string): string {
   return new Date(y, m - 1, d).toISOString()
 }
 
+/** For a genuine calendar-date value (a Postgres `date` column, e.g.
+ *  applications.applied_at — no time-of-day, no timezone) -> "Mar 4, 2026".
+ *  Reads UTC getters, not local ones: the write side (a plain "yyyy-mm-dd"
+ *  string, `::date`-cast straight into Postgres) never involves timezone
+ *  math, so display must anchor to UTC too, or the day shifts depending on
+ *  viewer timezone and how the DB driver happens to serialize the value. */
+export function formatDateOnly(value: string | null | undefined): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  return d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+
+/** toDateOnlyInput's write-side counterpart for seeding <input type="date">
+ *  from an existing calendar-date value — see formatDateOnly. */
+export function toDateOnlyInput(value: string | null | undefined): string {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return ''
+  const y = d.getUTCFullYear()
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0')
+  const day = String(d.getUTCDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Today as "yyyy-mm-dd" in the viewer's LOCAL calendar date — NOT
+ *  `new Date().toISOString().slice(0, 10)`, which gives UTC's date and is
+ *  off by one for part of the day in any timezone away from UTC. */
+export function todayInput(): string {
+  const d = new Date()
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
 /** An application is always "Company — Role", never the role alone. */
 export function applicationLabel(roleTitle: string, companyName: string | null | undefined): string {
   return companyName ? `${companyName} — ${roleTitle}` : roleTitle

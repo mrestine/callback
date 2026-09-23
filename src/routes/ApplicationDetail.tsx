@@ -4,7 +4,7 @@ import { ApplicationForm } from '../components/ApplicationForm'
 import { Timeline } from '../components/Timeline'
 import { Badge, Button, ErrorNote, Field, Loading, PageHeader, SelectField } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
-import { applicationLabel, formatDate, titleCase, toDateInput } from '../lib/format'
+import { applicationLabel, formatDateOnly, titleCase, toDateOnlyInput } from '../lib/format'
 import { useApplication, useDeleteApplication, useUpdateApplication } from '../lib/queries'
 
 export function ApplicationDetail() {
@@ -71,7 +71,7 @@ export function ApplicationDetail() {
               location: application.location ?? '',
               remote: application.remote ?? '',
               salary_range: application.salary_range ?? '',
-              applied_at: toDateInput(application.applied_at),
+              applied_at: toDateOnlyInput(application.applied_at),
               notes: application.notes ?? '',
             }}
             defaultCompany={company ? { id: company.id, label: company.name } : null}
@@ -121,7 +121,7 @@ export function ApplicationDetail() {
               )}
             </dd>
             <dt className="text-gray-500">Applied on</dt>
-            <dd>{formatDate(application.applied_at) || <span className="text-gray-400">—</span>}</dd>
+            <dd>{formatDateOnly(application.applied_at) || <span className="text-gray-400">—</span>}</dd>
             <dt className="text-gray-500">Source</dt>
             <dd>{application.source || <span className="text-gray-400">—</span>}</dd>
             <dt className="text-gray-500">Location</dt>
