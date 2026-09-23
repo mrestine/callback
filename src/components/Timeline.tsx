@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import type { EventRow } from '../lib/types'
-import { formatDate, formatShortDate, titleCase, toDateInput } from '../lib/format'
+import { dateInputToInstant, formatDate, formatShortDate, titleCase, toDateInput } from '../lib/format'
 import { EVENT_SUBTYPE_SUGGESTIONS, MANUAL_EVENT_TYPES } from '../schemas'
 import { useCreateEvent, useDeleteEvent, useUpdateEvent } from '../lib/queries'
 import { Badge, Button, EmptyState, ErrorNote, Field, SelectField, TextArea, TextField } from './ui'
@@ -89,7 +89,10 @@ function EventItem({ event: e, scope, editable }: { event: EventRow; scope: Scop
                 // the date-only input would otherwise clobber the original
                 // time-of-day on every unrelated edit, silently reordering
                 // same-day events in the timeline.
-                occurred_at: v.occurredAt !== originalDateInput ? v.occurredAt || undefined : undefined,
+                occurred_at:
+                  v.occurredAt !== originalDateInput
+                    ? (v.occurredAt && dateInputToInstant(v.occurredAt)) || undefined
+                    : undefined,
               },
               { onSuccess: () => setEditing(false) },
             )
@@ -167,7 +170,7 @@ function Composer({ applicationId, contactId }: Scope) {
         type: v.type,
         subtype: v.subtype || undefined,
         body: v.body || undefined,
-        occurred_at: v.occurredAt || undefined,
+        occurred_at: (v.occurredAt && dateInputToInstant(v.occurredAt)) || undefined,
       },
       { onSuccess: () => setNonce((n) => n + 1) },
     )

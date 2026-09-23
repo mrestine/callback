@@ -14,12 +14,29 @@ export function formatShortDate(value: string | null | undefined): string {
   return d.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' })
 }
 
-/** A Date -> "yyyy-mm-dd" for <input type="date"> default values. */
+/** A Date -> "yyyy-mm-dd" for <input type="date"> default values, using the
+ *  viewer's LOCAL calendar date (not UTC) — must match dateInputToInstant's
+ *  local-midnight write so editing an existing value round-trips to the same
+ *  day it was picked as, regardless of timezone. */
 export function toDateInput(value: string | null | undefined): string {
   if (!value) return ''
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return ''
-  return d.toISOString().slice(0, 10)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** "yyyy-mm-dd" (from <input type="date">) -> an ISO instant at LOCAL midnight
+ *  of that date. `new Date("yyyy-mm-dd")` parses as UTC midnight per the
+ *  ISO-8601 spec — the wrong instant for anyone west of UTC, since it renders
+ *  back (via toLocaleDateString, which is timezone-aware) as the PREVIOUS
+ *  local day. The date-only inputs that feed this never carry a real time of
+ *  day, so local midnight is the correct — and only unambiguous — choice. */
+export function dateInputToInstant(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map(Number)
+  return new Date(y, m - 1, d).toISOString()
 }
 
 /** An application is always "Company — Role", never the role alone. */

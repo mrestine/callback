@@ -5,6 +5,7 @@ import { useCompanyOptions } from '../lib/queries'
 import type { ContactInput } from '../lib/queries'
 import type { AutocompleteOption } from '../lib/types'
 import { applyServerErrors, errorMessage } from '../lib/forms'
+import { dateInputToInstant } from '../lib/format'
 import { Autocomplete } from './Autocomplete'
 import { Button, ErrorNote, Field, SelectField, TextArea, TextField } from './ui'
 
@@ -57,7 +58,11 @@ export function ContactForm({
   const submit = handleSubmit(async (values) => {
     setFormError(null)
     try {
-      await onSubmit({ ...values, company_id: company ? String(company.id) : '' })
+      await onSubmit({
+        ...values,
+        last_contact_at: values.last_contact_at ? dateInputToInstant(values.last_contact_at) : '',
+        company_id: company ? String(company.id) : '',
+      })
     } catch (err) {
       if (!applyServerErrors(err, setError)) setFormError(errorMessage(err))
     }
