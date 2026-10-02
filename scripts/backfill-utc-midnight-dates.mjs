@@ -9,7 +9,7 @@
  * America/New_York local midnight instead of UTC midnight, via Intl's
  * per-date DST-aware offset. Covers both source='manual' events (the
  * date-only UI bug) and source='ai' events (the extraction pipeline hit the
- * same bug when the model gave a bare date with no time — now fixed in
+ * same bug when the model gave a bare date with no time - now fixed in
  * api/_inbound.ts's add_event, see dateOnlyToInstant in src/schemas/index.ts),
  * plus all affected contacts.last_contact_at (always manual).
  *
@@ -69,4 +69,4 @@ for (const c of contacts) {
   if (apply) await sql`update contacts set last_contact_at = ${corrected} where id = ${c.id}`
 }
 
-console.log(apply ? '\nDone.' : '\nDry run only — re-run with --apply to write these changes.')
+console.log(apply ? '\nDone.' : '\nDry run only - re-run with --apply to write these changes.')

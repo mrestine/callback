@@ -85,7 +85,7 @@ function EventItem({ event: e, scope, editable }: { event: EventRow; scope: Scop
                 type: v.type,
                 subtype: v.subtype || undefined,
                 body: v.body || undefined,
-                // Only resend occurred_at if the date was actually changed —
+                // Only resend occurred_at if the date was actually changed -
                 // the date-only input would otherwise clobber the original
                 // time-of-day on every unrelated edit, silently reordering
                 // same-day events in the timeline.

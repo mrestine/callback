@@ -16,7 +16,7 @@ const emptyToUndefined = (v: unknown) => (v === '' || v === null ? undefined : v
 /**
  * Single-operator app, so a fixed timezone stands in for "the operator's
  * local time" wherever server-side code (no browser, no per-request
- * timezone) needs one. Used only as a last resort — see dateOnlyToInstant.
+ * timezone) needs one. Used only as a last resort - see dateOnlyToInstant.
  */
 export const OPERATOR_TZ = 'America/New_York'
 
@@ -33,12 +33,12 @@ const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
  * "yyyy-mm-dd" -> ISO instant at OPERATOR_TZ local midnight of that date
  * (DST-aware). A bare date has no time-of-day; parsing it with `new Date()`
  * (or z.coerce.date()) gives UTC midnight, which then renders as the
- * PREVIOUS calendar day for any timezone behind UTC — never do that. The
+ * PREVIOUS calendar day for any timezone behind UTC - never do that. The
  * browser client independently sends local midnight in the viewer's OWN
  * timezone when it has one (see dateInputToInstant in src/lib/format.ts,
  * more accurate since it's the real viewer, not a hardcoded stand-in); this
  * is the systemic backstop for anything that reaches a date field as a bare
- * date without going through that — the AI extraction pipeline, a future
+ * date without going through that - the AI extraction pipeline, a future
  * API caller, etc.
  */
 export function dateOnlyToInstant(dateStr: string): string {
@@ -50,7 +50,7 @@ export function dateOnlyToInstant(dateStr: string): string {
 
 /** The inverse direction: a real instant -> OPERATOR_TZ's calendar date, as
  *  "yyyy-mm-dd". For deriving a date-only value (e.g. applied_at) from a
- *  genuine timestamp server-side — never `.toISOString().slice(0, 10)`,
+ *  genuine timestamp server-side - never `.toISOString().slice(0, 10)`,
  *  which takes UTC's calendar date and is off by one for part of the day. */
 export function instantToLocalDateOnly(date: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -65,7 +65,7 @@ export function instantToLocalDateOnly(date: Date): string {
 
 /** Folds empty strings/null to undefined, AND promotes a bare "yyyy-mm-dd"
  *  string to an OPERATOR_TZ-local-midnight instant before z.coerce.date()
- *  ever sees it — so no caller of a date field can accidentally end up at
+ *  ever sees it - so no caller of a date field can accidentally end up at
  *  UTC midnight just by sending a plain date. */
 const dateOnlySafe = (v: unknown) => {
   const folded = emptyToUndefined(v)

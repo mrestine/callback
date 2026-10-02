@@ -536,7 +536,7 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         if (!appExpr && !ctExpr) break // nothing to attach it to
         const rawWhen = clean(A('occurred_at') as string)
         // the model sometimes gives a bare date with no time (e.g. "let's go
-        // for it Thursday" with no clock time) — never let that fall through
+        // for it Thursday" with no clock time) - never let that fall through
         // to new Date()'s UTC-midnight parsing, same reasoning as schemas/
         // index.ts's dateOnlyToInstant.
         const when = rawWhen ? new Date(DATE_ONLY.test(rawWhen) ? dateOnlyToInstant(rawWhen) : rawWhen) : ctx.fallbackOccurredAt

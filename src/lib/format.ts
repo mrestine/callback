@@ -15,7 +15,7 @@ export function formatShortDate(value: string | null | undefined): string {
 }
 
 /** A Date -> "yyyy-mm-dd" for <input type="date"> default values, using the
- *  viewer's LOCAL calendar date (not UTC) — must match dateInputToInstant's
+ *  viewer's LOCAL calendar date (not UTC) - must match dateInputToInstant's
  *  local-midnight write so editing an existing value round-trips to the same
  *  day it was picked as, regardless of timezone. */
 export function toDateInput(value: string | null | undefined): string {
@@ -30,17 +30,17 @@ export function toDateInput(value: string | null | undefined): string {
 
 /** "yyyy-mm-dd" (from <input type="date">) -> an ISO instant at LOCAL midnight
  *  of that date. `new Date("yyyy-mm-dd")` parses as UTC midnight per the
- *  ISO-8601 spec — the wrong instant for anyone west of UTC, since it renders
+ *  ISO-8601 spec - the wrong instant for anyone west of UTC, since it renders
  *  back (via toLocaleDateString, which is timezone-aware) as the PREVIOUS
  *  local day. The date-only inputs that feed this never carry a real time of
- *  day, so local midnight is the correct — and only unambiguous — choice. */
+ *  day, so local midnight is the correct - and only unambiguous - choice. */
 export function dateInputToInstant(dateStr: string): string {
   const [y, m, d] = dateStr.split('-').map(Number)
   return new Date(y, m - 1, d).toISOString()
 }
 
 /** For a genuine calendar-date value (a Postgres `date` column, e.g.
- *  applications.applied_at — no time-of-day, no timezone) -> "Mar 4, 2026".
+ *  applications.applied_at - no time-of-day, no timezone) -> "Mar 4, 2026".
  *  Reads UTC getters, not local ones: the write side (a plain "yyyy-mm-dd"
  *  string, `::date`-cast straight into Postgres) never involves timezone
  *  math, so display must anchor to UTC too, or the day shifts depending on
@@ -53,7 +53,7 @@ export function formatDateOnly(value: string | null | undefined): string {
 }
 
 /** toDateOnlyInput's write-side counterpart for seeding <input type="date">
- *  from an existing calendar-date value — see formatDateOnly. */
+ *  from an existing calendar-date value - see formatDateOnly. */
 export function toDateOnlyInput(value: string | null | undefined): string {
   if (!value) return ''
   const d = new Date(value)
@@ -64,7 +64,7 @@ export function toDateOnlyInput(value: string | null | undefined): string {
   return `${y}-${m}-${day}`
 }
 
-/** Today as "yyyy-mm-dd" in the viewer's LOCAL calendar date — NOT
+/** Today as "yyyy-mm-dd" in the viewer's LOCAL calendar date - NOT
  *  `new Date().toISOString().slice(0, 10)`, which gives UTC's date and is
  *  off by one for part of the day in any timezone away from UTC. */
 export function todayInput(): string {

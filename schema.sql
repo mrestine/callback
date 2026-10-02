@@ -152,7 +152,7 @@ update applications set applied_at = created_at::date
   where status = 'applied' and applied_at is null;
 
 -- add 'technical' as its own stage between the recruiter screen and the
--- (virtual) onsite loop — most pipelines have exactly one technical round there.
+-- (virtual) onsite loop - most pipelines have exactly one technical round there.
 alter table applications drop constraint if exists applications_status_check;
 alter table applications add constraint applications_status_check
   check (status in ('lead', 'applied', 'screen', 'technical', 'onsite',

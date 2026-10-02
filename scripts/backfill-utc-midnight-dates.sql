@@ -10,7 +10,7 @@
 --
 -- Covers both source='manual' events (the date-only UI bug) and source='ai'
 -- events (the extraction pipeline hit the same bug on a bare-date model
--- output — now fixed in api/_inbound.ts's add_event), plus all affected
+-- output - now fixed in api/_inbound.ts's add_event), plus all affected
 -- contacts.last_contact_at (always manual).
 --
 -- Naturally idempotent: once corrected, occurred_at's time-of-day is no
@@ -18,7 +18,7 @@
 -- second run. Safe to re-run.
 --
 -- Apply with: psql "$DATABASE_URL" -f scripts/backfill-utc-midnight-dates.sql
--- (npm run db:apply only runs schema.sql — this is a one-time script, not
+-- (npm run db:apply only runs schema.sql - this is a one-time script, not
 -- part of the standing schema, so it isn't wired into that tool. If you
 -- don't have psql, use scripts/backfill-utc-midnight-dates.mjs instead.)
 

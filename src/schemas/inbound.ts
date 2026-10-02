@@ -3,7 +3,7 @@ import { APPLICATION_STATUSES, CONTACT_KINDS, dateOnlyToInstant } from './index.
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 /** Promotes a bare "yyyy-mm-dd" to a local-midnight instant before
- *  z.coerce.date() runs — see dateOnlyToInstant in index.ts. The worker
+ *  z.coerce.date() runs - see dateOnlyToInstant in index.ts. The worker
  *  always sends a full timestamp for this field in practice, but nothing
  *  here should silently fall back to UTC midnight if that ever isn't true. */
 const dateOnlySafe = (v: unknown) => (typeof v === 'string' && DATE_ONLY.test(v) ? dateOnlyToInstant(v) : v)

@@ -253,7 +253,7 @@ async function scenarioAllLinkedNoCompanyRef() {
 
 async function scenarioAssessmentInviteDefaultsToTechnical() {
   console.log('\n# assessment_invite, no explicit status_signal -> defaults to technical (not screen)')
-  // a unique company name — 'Encamp' is used by two other scenarios in this
+  // a unique company name - 'Encamp' is used by two other scenarios in this
   // run and shares no reset() between scenarios, so reusing it here let
   // fuzzy company matching resolve to THEIR application, not this one
   // (the update silently landed on the wrong row instead of erroring).
