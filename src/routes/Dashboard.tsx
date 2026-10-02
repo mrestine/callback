@@ -21,22 +21,6 @@ export function Dashboard() {
         <p className="mt-2 text-base">
           <ActiveSummary data={data} />
         </p>
-
-        {stale.length > 0 && (
-          <ul className="mt-3 divide-y divide-gray-100 rounded-lg border border-gray-200 text-sm dark:divide-gray-900 dark:border-gray-800">
-            {stale.map((a) => (
-              <li key={a.id} className="flex items-center justify-between px-3 py-2">
-                <Link to={`/applications/${a.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
-                  {a.role_title} <span className="text-gray-500">· {a.company_name}</span>
-                </Link>
-                <span className="flex items-center gap-3 text-gray-500">
-                  <Badge tone={a.status}>{titleCase(a.status)}</Badge>
-                  <span>{daysSince(a.last_activity_at)}d quiet</span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
       </section>
 
       <section>
@@ -81,6 +65,25 @@ export function Dashboard() {
           </ul>
         )}
       </section>
+
+      {stale.length > 0 && (
+        <section>
+          <h3 className="mb-2 text-sm font-semibold">Quiet applications</h3>
+          <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 text-sm dark:divide-gray-900 dark:border-gray-800">
+            {stale.map((a) => (
+              <li key={a.id} className="flex items-center justify-between px-3 py-2">
+                <Link to={`/applications/${a.id}`} className="text-blue-600 hover:underline dark:text-blue-400">
+                  {a.role_title} <span className="text-gray-500">· {a.company_name}</span>
+                </Link>
+                <span className="flex items-center gap-3 text-gray-500">
+                  <Badge tone={a.status}>{titleCase(a.status)}</Badge>
+                  <span>{daysSince(a.last_activity_at)}d quiet</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   )
 }
