@@ -46,16 +46,28 @@ Since I wasn’t paying for cloud usage of the worker and didn't have to worry a
 
 It’s all relatively straightforward, but I had to navigate a few trapdoors that popped up. Most of these cases involved tuning the model prompts to get the desired outputs, but some included changing the contract between the worker and Callback. Some were as simple as adding a new Application status which involved matching updates in the app and the worker, but other issues were more complicated like dealing with a recruiter email that included multiple job descriptions.
 
+## Random Expectations to Full Evals
+To align my own development with more industry accepted practices, I cleaned up some of the email fixtures and expected json output files to actually run as evals. Now, any time I tweak the prompts for any reason, the evals do a good job of surfacing regressions. Since my local 7B model is pretty close to its cap when it comes to parsing, even smaller changes have regressed in ways that surprised me. The evals are certainly worth having. 
+
+## Can It Use a Tool?
+Not yet. I wanted to wire up a tool, but the use case just wasn't there. It was going to be a simple web search to gather company details if the company doesn't already exist in Callback. Callback makes this check itself for inbound change suggestions later in the flow. Since I didn't want to duplicate that logic in Callback and the worker, I gave Callback an endpoint that the worker could use to check existence. It returns a boolean to keep the two in lockstep. Since the decision to require the web search was so cut and dried, having a model choose to use a web search tool rather than if statement just didn't seem like the right path. 
+
+The search uses Serper's free tier to search for details like industry, main product or value proposition, age, size, and funding status. The model then simply summarizes the search results into a couple of sentences that get sent along with the proposed changes from the worker to Callback. This runs in a separate prompt so as not to step on the parser's capabilities; it only runs when the company is new, and the parser never pays for it. The model is usually still in VRAM after parsing, so subsequent model calls likely will not add much latency to the flow. I also have evals for this, and they have already caught regressions.
+
+In the end, there is no tool usage yet. In an early version of building the company summary generator, I gave it a tool, but the potential disagreement in company existence between Callback and the worker was a dealbreaker. I will try again to find a proper use case for a tool in the future, but it will have to not come at the expense of the existing functionality, and it has to be the right solution for the problem at hand.
+
 ## Diagram
 <img width="930" height="615" alt="Excalidraw architecture diagram" src="https://github.com/user-attachments/assets/5220da73-8f13-4b34-a11b-c41862044e8f" />
 
-## The Present
+The web search via Serper is missing from here.
 
+## The Present
 The original vision was for the updates to be applied automatically, but I would be reviewing them for correctness either way, even if only to satisfy my own curiosity. What's a couple of clicks on top of that?
 
 Given that the tradeoff is 2 clicks versus blind trust in AI for something as impactful to me as job applications, I'll make the clicks, even if over 90% of the time I don't make any changes to the proposed changes before sending them.
 
 
 ## The Future
+The next thing I have planned is operator's notes - added context when I forward an email for ingestion. One case might be that a job title, salary range, or job description link is missing from the application confirmation email. Job title is usually there, but the other two are generally not. I end up filling in the missing fields when I'm reviewing the changes. This means I have to keep that data close at hand while I wait for the worker to pick up the email and do its work. Instead, I would like to put this data in the body of the forwarded email (above the Forwarded message divider), and add another model call to parse out any data in there, and resolve that data to the available fields for an application (or other entity). The data would then make its way into the change proposal, and I can approve without the need to have kept track of extra info like the JD link or salary expectations.
 
-For the next time I find myself on the market, I'll likely revisit this to add whatever organizational tools would help across multiple searches. Aside from that, I don't have big plans in mind.
+I'm also still on the hunt for a reason to develop a tool and hope that my little 7B model is up to the task when it's time. I would like to push this closer to an "agentic" flow rather than just an AI-powered workflow, if only for my own edification.
