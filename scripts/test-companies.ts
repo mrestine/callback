@@ -57,7 +57,7 @@ async function addCompany(uid: number, name: string): Promise<number> {
 }
 
 /** Invoke the route handler directly with a minimal req/res. */
-async function call(opts: { method: string; query?: Record<string, string>; headers?: Record<string, string> }) {
+async function call(opts: { method: string; query?: Record<string, string | string[]>; headers?: Record<string, string> }) {
   const res = {
     statusCode: 200,
     body: undefined as unknown,
@@ -128,11 +128,33 @@ async function scenarioRoute() {
   await sql`insert into api_tokens (user_id, name, token_hash) values (${TEST_UID}, 'test-companies', ${hashToken(raw)})`
   const bearer = { authorization: `Bearer ${raw}` }
 
+  type Result = { name: string; exists: boolean; candidates: { label: string }[] }
+  const resultsOf = (r: { body?: Record<string, unknown> }) => (r.body?.results ?? []) as Result[]
+
   const ok = await call({ method: 'GET', query: { match: 'Ashby' }, headers: bearer })
-  const cands = (ok.body?.candidates ?? []) as { label: string }[]
   check('bearer token -> 200', ok.status === 200, ok)
-  check('returns candidates', cands.length > 0 && cands[0].label === 'Ashby', ok.body)
-  check('returns ONLY candidates (no verdict for the caller to lean on)', Object.keys(ok.body ?? {}).join() === 'candidates', ok.body)
+  check('response is { results } only', Object.keys(ok.body ?? {}).join() === 'results', ok.body)
+  check('a single name (string) -> one result', resultsOf(ok).length === 1, ok.body)
+  check('known company -> exists: true, with its candidate', resultsOf(ok)[0]?.exists === true && resultsOf(ok)[0].candidates[0]?.label === 'Ashby', ok.body)
+
+  const many = await call({ method: 'GET', query: { match: ['Ashby', 'Zzyzx Holdings', 'Bright'] }, headers: bearer })
+  const rs = resultsOf(many)
+  check('several names (array) -> one result per name, in order', rs.map((r) => r.name).join('|') === 'Ashby|Zzyzx Holdings|Bright', many.body)
+  check('unknown company -> exists: false, no candidates', rs[1]?.exists === false && rs[1].candidates.length === 0, rs[1])
+  check('weak match -> exists: false BUT candidates still returned', rs[2]?.exists === false && rs[2].candidates.length > 0, rs[2])
+
+  // the route must not carry its own idea of "same company": for every name,
+  // exists has to equal the pipeline's own verdict from matchCompany
+  const names = ['Ashby', 'ASHBY', 'Bright', 'Brightwell Labs', 'Zzyzx Holdings', 'Zephyr']
+  const agree = await call({ method: 'GET', query: { match: names }, headers: bearer })
+  const verdicts = await Promise.all(names.map(async (n) => (await matchCompany(TEST_UID, n)).chosen !== null))
+  check('exists agrees with matchCompany().chosen for every name', resultsOf(agree).every((r, i) => r.exists === verdicts[i]), { got: resultsOf(agree).map((r) => r.exists), want: verdicts })
+
+  const blanks = await call({ method: 'GET', query: { match: ['', '  ', 'Ashby'] }, headers: bearer })
+  check('blank names are ignored', resultsOf(blanks).length === 1 && resultsOf(blanks)[0].name === 'Ashby', blanks.body)
+
+  const tooMany = await call({ method: 'GET', query: { match: Array.from({ length: 21 }, (_, i) => `Co ${i}`) }, headers: bearer })
+  check('more than 20 names -> 400', tooMany.status === 400, tooMany)
 
   const anon = await call({ method: 'GET', query: { match: 'Ashby' } })
   check('no credentials -> 401', anon.status === 401, anon)

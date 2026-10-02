@@ -10,11 +10,18 @@ export interface CompanyMatch {
   candidates: MatchCandidate[]
 }
 
+/** A top candidate scoring at least this (or matching the name exactly) is "the same company". */
+export const SAME_COMPANY_SCORE = 0.6
+
+/** Most names one lookup request may carry. */
+const MAX_MATCH_NAMES = 20
+
 /**
  * Companies of `uid` that look like `name`: substring or trigram match, best
- * first, at most 5. `chosen` is the deterministic verdict used by the inbound
- * pipeline (an exact name or a score of 0.6+); the lookup route below returns
- * only `candidates`, leaving the "is this the same company" call to its caller.
+ * first, at most 5. `chosen` is THE verdict on whether one of them is the same
+ * company (an exact name, or a score of SAME_COMPANY_SCORE+). It is the only
+ * place that is decided: the inbound pipeline links to a company iff `chosen`
+ * is set, and the lookup route below reports `exists` as `chosen !== null`.
  */
 export async function matchCompany(uid: number, name: string): Promise<CompanyMatch> {
   const rows = await sql`
@@ -32,20 +39,39 @@ export async function matchCompany(uid: number, name: string): Promise<CompanyMa
   }))
   const top = rows[0]
   const confident =
-    top && (String(top.name).toLowerCase() === name.toLowerCase() || Number(top.score) >= 0.6)
+    top &&
+    (String(top.name).toLowerCase() === name.toLowerCase() || Number(top.score) >= SAME_COMPANY_SCORE)
   return { chosen: confident ? Number(top.id) : null, candidates }
 }
 
+/** `?match=A` -> ['A']; `?match=A&match=B` -> ['A', 'B']. Blanks dropped. */
+function matchNames(req: VercelRequest): string[] {
+  const raw = req.query.match
+  const list = Array.isArray(raw) ? raw : raw === undefined ? [] : [raw]
+  return list.map((s) => s.trim()).filter(Boolean)
+}
+
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
-  // GET ?match=<name>: the ingestion worker looks a company up by name with
-  // its bearer token. Only this lookup accepts a token; every other route in
-  // this file stays session-only, so the token can't list, edit or delete.
-  const matchName = req.method === 'GET' ? qparam(req, 'match') : undefined
-  if (matchName) {
+  // GET ?match=<name> (repeat the param for several names): does a company
+  // by this name already exist? Answers per name, in order, with the verdict
+  // (`exists`) and the candidates behind it. The ingestion worker calls this
+  // with its bearer token. Only this lookup accepts a token; every other
+  // route in this file stays session-only, so the token can't list, edit or
+  // delete.
+  const names = req.method === 'GET' ? matchNames(req) : []
+  if (names.length > 0) {
     const who = await requireTokenOrAuth(req, res)
     if (!who) return
-    const { candidates } = await matchCompany(who.uid, matchName)
-    return void res.status(200).json({ candidates })
+    if (names.length > MAX_MATCH_NAMES) {
+      return void res.status(400).json({ error: `at most ${MAX_MATCH_NAMES} names per lookup` })
+    }
+    const results = await Promise.all(
+      names.map(async (name) => {
+        const { chosen, candidates } = await matchCompany(who.uid, name)
+        return { name, exists: chosen !== null, candidates }
+      }),
+    )
+    return void res.status(200).json({ results })
   }
 
   const auth = requireAuth(req, res)
