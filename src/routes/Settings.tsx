@@ -47,7 +47,7 @@ export function Settings() {
         {fresh && (
           <div className="mb-4 rounded-md border border-green-300 bg-green-50 p-3 text-sm dark:border-green-800 dark:bg-green-950">
             <div className="mb-1 font-medium text-green-800 dark:text-green-300">
-              Token “{fresh.name}” created — copy it now, it won't be shown again:
+              Token “{fresh.name}” created - copy it now, it won't be shown again:
             </div>
             <code className="block break-all rounded bg-white px-2 py-1 text-xs dark:bg-gray-900">
               {fresh.token}

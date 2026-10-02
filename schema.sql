@@ -1,4 +1,4 @@
--- callback — database schema (Postgres / Neon)
+-- callback - database schema (Postgres / Neon)
 -- Apply with:  npm run db:apply
 -- Idempotent: safe to re-run.
 
@@ -147,7 +147,7 @@ alter table applications add column if not exists inbound_action_id
 -- one-time backfill: create_application never set applied_at (fixed in
 -- api/_inbound.ts's buildApplyPlan), so every application approved before
 -- that fix landed with status='applied' but a blank date. Naturally
--- idempotent — a no-op once every such row has been backfilled.
+-- idempotent - a no-op once every such row has been backfilled.
 update applications set applied_at = created_at::date
   where status = 'applied' and applied_at is null;
 

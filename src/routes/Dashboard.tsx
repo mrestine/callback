@@ -35,12 +35,12 @@ export function Dashboard() {
                   {formatShortDate(e.occurred_at)}
                 </span>
                 <span className="whitespace-nowrap text-gray-600 dark:text-gray-400">
-                  {e.company_name || <span className="text-gray-400">—</span>}
+                  {e.company_name || <span className="text-gray-400">-</span>}
                 </span>
                 <UpcomingLink e={e} />
                 <span className="text-gray-500">
                   {eventLabel(e.type, e.subtype)}
-                  {e.body && <> — {e.body}</>}
+                  {e.body && <> - {e.body}</>}
                 </span>
               </li>
             ))}

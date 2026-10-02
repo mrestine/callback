@@ -110,7 +110,7 @@ async function scenarioNewCompanyConfirmation() {
     app?.applied_at && new Date(app.applied_at).toISOString().slice(0, 10) === '2026-09-08',
     app?.applied_at,
   )
-  // provenance is inbound_action_id, not the free-text source column — that's
+  // provenance is inbound_action_id, not the free-text source column - that's
   // user-fillable ("referral", "LinkedIn"...) same as a manually-created app,
   // and stays null unless the reviewer fills it in before approving
   check('application.source is null (not hardcoded, nothing was filled in)', app?.source === null, app?.source)
@@ -195,13 +195,13 @@ async function scenarioThreadContinuity() {
 async function scenarioAllLinkedNoCompanyRef() {
   console.log('\n# interview email, company/application/contact ALL already matched -> link-only proposal applies cleanly')
   // real bug (found live, id 53): when every entity resolves via link_* (no
-  // create_*) and nothing downstream references the company's own id — here
+  // create_*) and nothing downstream references the company's own id - here
   // link_application/link_contact don't route through refs.company_id, only
-  // add_event/set_status reference the application/contact — buildApplyPlan
+  // add_event/set_status reference the application/contact - buildApplyPlan
   // used to eagerly bind $N for every link op's chosen id regardless of
   // whether the generated SQL ever mentioned that placeholder. An unused $N
   // makes postgres fail outright: "could not determine data type of
-  // parameter $N" — not a graceful no-op, a hard apply failure with an
+  // parameter $N" - not a graceful no-op, a hard apply failure with an
   // opaque error on every attempt.
   const [co] = await sql`select id from companies where user_id = ${TEST_UID} and name = 'Flex'`
   const [app] = await sql`select id from applications where user_id = ${TEST_UID} and company_id = ${co.id} limit 1`
@@ -350,7 +350,7 @@ async function scenarioMultiOpportunity() {
   }
   const createApps = ops.filter((o) => o.op === 'create_application')
   check('3 create_application ops, all accepted, all lead', createApps.length === 3 && createApps.every((o) => o.decision === 'accept' && o.args?.status === 'lead'), createApps)
-  check('has create_contact for Scott (accepted, no company link — agency)', ops.some((o) => o.op === 'create_contact' && o.decision === 'accept' && o.refs?.company_id === undefined))
+  check('has create_contact for Scott (accepted, no company link - agency)', ops.some((o) => o.op === 'create_contact' && o.decision === 'accept' && o.refs?.company_id === undefined))
   const events = ops.filter((o) => o.op === 'add_event')
   check('exactly ONE event for the whole email, on the contact (not any one application)', events.length === 1 && events[0].refs?.contact_id === '$ct1' && events[0].refs?.application_id === undefined, events)
 

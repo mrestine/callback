@@ -87,11 +87,11 @@ export function ContactDetail() {
                 {company.name}
               </Link>
             ) : (
-              <span className="text-gray-400">—</span>
+              <span className="text-gray-400">-</span>
             )}
           </dd>
           <dt className="text-gray-500">Role</dt>
-          <dd>{contact.role || <span className="text-gray-400">—</span>}</dd>
+          <dd>{contact.role || <span className="text-gray-400">-</span>}</dd>
           <dt className="text-gray-500">Kind</dt>
           <dd>{titleCase(contact.kind)}</dd>
           <dt className="text-gray-500">Email</dt>
@@ -101,7 +101,7 @@ export function ContactDetail() {
                 {contact.email}
               </a>
             ) : (
-              <span className="text-gray-400">—</span>
+              <span className="text-gray-400">-</span>
             )}
           </dd>
           <dt className="text-gray-500">LinkedIn</dt>
@@ -116,13 +116,13 @@ export function ContactDetail() {
                 {contact.linkedin_url}
               </a>
             ) : (
-              <span className="text-gray-400">—</span>
+              <span className="text-gray-400">-</span>
             )}
           </dd>
           <dt className="text-gray-500">Last contact</dt>
-          <dd>{formatDate(contact.last_contact_at) || <span className="text-gray-400">—</span>}</dd>
+          <dd>{formatDate(contact.last_contact_at) || <span className="text-gray-400">-</span>}</dd>
           <dt className="text-gray-500">Notes</dt>
-          <dd className="whitespace-pre-wrap">{contact.notes || <span className="text-gray-400">—</span>}</dd>
+          <dd className="whitespace-pre-wrap">{contact.notes || <span className="text-gray-400">-</span>}</dd>
         </dl>
       )}
 

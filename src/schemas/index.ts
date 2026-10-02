@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 /**
- * Shared validation schemas — imported by the React forms (via zodResolver) and
+ * Shared validation schemas - imported by the React forms (via zodResolver) and
  * by the /api handlers to validate request bodies. No React / Node imports here.
  *
  * Optional fields use `z.preprocess` to fold empty strings / null (what HTML

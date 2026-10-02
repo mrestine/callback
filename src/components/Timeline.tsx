@@ -20,7 +20,7 @@ interface FieldValues {
 
 const SUBTYPE_LIST_ID = 'event-subtype-suggestions'
 
-/** Renders `<label — subtype>` e.g. "Interview · Technical". */
+/** Renders `<label - subtype>` e.g. "Interview · Technical". */
 export function eventLabel(type: string, subtype: string | null): string {
   return subtype ? `${titleCase(type)} · ${subtype}` : titleCase(type)
 }

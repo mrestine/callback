@@ -177,7 +177,7 @@ export type InboundStatus =
   | 'duplicate'
   | 'error'
 
-/** the worker's extracted structure — callback treats it as opaque display data */
+/** the worker's extracted structure - callback treats it as opaque display data */
 export interface InboundExtracted {
   job_related: boolean
   email_kind: string

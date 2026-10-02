@@ -75,9 +75,9 @@ export function todayInput(): string {
   return `${y}-${m}-${day}`
 }
 
-/** An application is always "Company — Role", never the role alone. */
+/** An application is always "Company - Role", never the role alone. */
 export function applicationLabel(roleTitle: string, companyName: string | null | undefined): string {
-  return companyName ? `${companyName} — ${roleTitle}` : roleTitle
+  return companyName ? `${companyName} - ${roleTitle}` : roleTitle
 }
 
 /** 14 -> "2 weeks"; 10 -> "10 days"; 7 -> "1 week". */

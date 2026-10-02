@@ -1,6 +1,6 @@
 # callback
 
-Multi-user job-application tracker — contacts, companies, applications, and a
+Multi-user job-application tracker - contacts, companies, applications, and a
 per-application event timeline. React + Vite SPA, Vercel serverless functions, Neon Postgres.
 
 This works just fine on its own, but it's enhanced by the [callback-worker](https://github.com/mrestine/callback-worker), which can generate change proposals from emails. For more details, see that repo or check out the full [Development Outline](./development-outline.md).
@@ -20,7 +20,7 @@ and the GitHub OAuth callback URL (its default port is 3000).
 
 ## Environment
 
-Local dev reads `.env` (not `.env.local` — `vercel dev`'s function runtime only
+Local dev reads `.env` (not `.env.local` - `vercel dev`'s function runtime only
 loads `.env`). All values are server-side; no `VITE_` vars. The same keys must be
 set in the Vercel project for deployed environments, with `APP_BASE_URL` pointing
 at the production URL. See `.env.example` for the full list and where each comes

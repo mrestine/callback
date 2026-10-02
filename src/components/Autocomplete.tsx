@@ -1,9 +1,9 @@
 /**
  * A reusable hybrid text/select field: type to search (debounced, so the
- * underlying query — and its cache — only re-runs a beat after the last
+ * underlying query - and its cache - only re-runs a beat after the last
  * keystroke), pick from the dropdown, or clear back to nothing. Backed by
  * whatever `useOptions` hook the caller supplies (see queries.ts's
- * `useCompanyOptions` / `useContactOptions` / `useApplicationOptions`) —
+ * `useCompanyOptions` / `useContactOptions` / `useApplicationOptions`) -
  * those already go through TanStack Query, so repeated searches for the same
  * text are served from cache instead of re-hitting the API.
  *
@@ -45,7 +45,7 @@ export function Autocomplete({
 }: {
   value: AutocompleteOption | null
   onChange: (option: AutocompleteOption | null) => void
-  /** A query hook (e.g. `useCompanyOptions`) — called every render per rules
+  /** A query hook (e.g. `useCompanyOptions`) - called every render per rules
    *  of hooks; gate what it fetches internally, not by conditionally calling it. */
   useOptions: (query: string) => UseOptionsResult
   placeholder?: string
@@ -55,7 +55,7 @@ export function Autocomplete({
   id?: string
   invalid?: boolean
   /** Shown before the reviewer types anything, instead of the unfiltered
-   *  `useOptions('')` list — e.g. a small set of already-scored/ranked
+   *  `useOptions('')` list - e.g. a small set of already-scored/ranked
    *  candidates a caller computed some other way. Typing still searches live
    *  via `useOptions`. */
   seedOptions?: AutocompleteOption[]
@@ -64,7 +64,7 @@ export function Autocomplete({
   const inputId = id ?? autoId
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  // false right after opening (or on a fresh mount) — true once the reviewer
+  // false right after opening (or on a fresh mount) - true once the reviewer
   // has actually typed something this session. Keyed separately from `query`
   // (rather than `query === ''`) so a debounce tick settling back to '' can't
   // by itself flip the seed list back on mid-edit.

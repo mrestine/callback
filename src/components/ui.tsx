@@ -135,7 +135,7 @@ export function Badge({ children, tone }: { children: ReactNode; tone?: string }
   return <span className={`inline-block rounded px-1.5 py-0.5 text-xs font-medium ${cls}`}>{children}</span>
 }
 
-/** A clickable `Badge` — full tone color when selected, muted outline otherwise. Used for multi-select filters. */
+/** A clickable `Badge` - full tone color when selected, muted outline otherwise. Used for multi-select filters. */
 export function ToggleBadge({
   children,
   tone,
@@ -165,7 +165,7 @@ export function ToggleBadge({
 }
 
 /**
- * A trigger that opens a floating panel — closes on outside click, Escape, or
+ * A trigger that opens a floating panel - closes on outside click, Escape, or
  * triggering again. Stays open across clicks inside it (for multi-select
  * panels); nothing auto-closes it for you.
  */

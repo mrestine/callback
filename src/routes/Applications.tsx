@@ -6,7 +6,7 @@ import { APPLICATION_STATUSES } from '../schemas'
 import { formatDate, formatDateOnly, titleCase } from '../lib/format'
 import { useApplications, useCreateApplication } from '../lib/queries'
 
-/** Default filter: everything still live — excludes rejected / withdrawn / ghosted. */
+/** Default filter: everything still live - excludes rejected / withdrawn / ghosted. */
 const DEFAULT_STATUSES = APPLICATION_STATUSES.filter(
   (s) => s !== 'rejected' && s !== 'withdrawn' && s !== 'ghosted',
 )
@@ -137,17 +137,17 @@ export function Applications() {
                         {a.contact_name}
                       </Link>
                     ) : (
-                      <span className="text-gray-400">—</span>
+                      <span className="text-gray-400">-</span>
                     )}
                   </td>
                   <td className="px-3 py-2">
                     <Badge tone={a.status}>{titleCase(a.status)}</Badge>
                   </td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
-                    {formatDateOnly(a.applied_at) || <span className="text-gray-400">—</span>}
+                    {formatDateOnly(a.applied_at) || <span className="text-gray-400">-</span>}
                   </td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
-                    {formatDate(a.last_event_at) || <span className="text-gray-400">—</span>}
+                    {formatDate(a.last_event_at) || <span className="text-gray-400">-</span>}
                   </td>
                 </tr>
               ))}

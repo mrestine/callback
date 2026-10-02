@@ -86,7 +86,7 @@ export function Companies() {
                         link ↗
                       </a>
                     ) : (
-                      <span className="text-gray-400">—</span>
+                      <span className="text-gray-400">-</span>
                     )}
                   </td>
                 </tr>

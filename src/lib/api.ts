@@ -1,6 +1,6 @@
 /**
  * Thin fetch wrapper for the /api routes. Sends cookies, parses JSON, throws on
- * non-2xx. A 401 means the session is gone — bounce to the login screen.
+ * non-2xx. A 401 means the session is gone - bounce to the login screen.
  */
 
 export interface ApiIssue {

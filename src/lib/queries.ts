@@ -196,14 +196,14 @@ function invalidateApplicationViews(qc: ReturnType<typeof useQueryClient>, id?: 
   qc.invalidateQueries({ queryKey: ['dashboard'] })
 }
 
-/** <Autocomplete> source for picking an existing application — always shown
- *  as "Company — Role", never role alone. */
+/** <Autocomplete> source for picking an existing application - always shown
+ *  as "Company - Role", never role alone. */
 export function useApplicationOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
   const applications = useApplications({ q: q || undefined })
   return {
     data: applications.data?.map((a) => ({
       id: a.id,
-      label: `${a.company_name ?? '?'} — ${a.role_title}`,
+      label: `${a.company_name ?? '?'} - ${a.role_title}`,
       sublabel: a.status,
     })),
     isLoading: applications.isLoading,

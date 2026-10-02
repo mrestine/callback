@@ -94,7 +94,7 @@ export function Contacts() {
                         {ct.company_name}
                       </Link>
                     ) : (
-                      <span className="text-gray-400">—</span>
+                      <span className="text-gray-400">-</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-400">{titleCase(ct.kind)}</td>
@@ -102,7 +102,7 @@ export function Contacts() {
                     <Badge tone={ct.warmth}>{ct.warmth}</Badge>
                   </td>
                   <td className="px-3 py-2 text-gray-600 dark:text-gray-400">
-                    {formatDate(ct.last_contact_at) || <span className="text-gray-400">—</span>}
+                    {formatDate(ct.last_contact_at) || <span className="text-gray-400">-</span>}
                   </td>
                 </tr>
               ))}

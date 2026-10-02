@@ -107,7 +107,7 @@ export function ApplicationDetail() {
                   {company.name}
                 </Link>
               ) : (
-                <span className="text-gray-400">—</span>
+                <span className="text-gray-400">-</span>
               )}
             </dd>
             <dt className="text-gray-500">Contact</dt>
@@ -117,20 +117,20 @@ export function ApplicationDetail() {
                   {contact.name}
                 </Link>
               ) : (
-                <span className="text-gray-400">—</span>
+                <span className="text-gray-400">-</span>
               )}
             </dd>
             <dt className="text-gray-500">Applied on</dt>
-            <dd>{formatDateOnly(application.applied_at) || <span className="text-gray-400">—</span>}</dd>
+            <dd>{formatDateOnly(application.applied_at) || <span className="text-gray-400">-</span>}</dd>
             <dt className="text-gray-500">Source</dt>
-            <dd>{application.source || <span className="text-gray-400">—</span>}</dd>
+            <dd>{application.source || <span className="text-gray-400">-</span>}</dd>
             <dt className="text-gray-500">Location</dt>
             <dd>
-              {application.location || <span className="text-gray-400">—</span>}
+              {application.location || <span className="text-gray-400">-</span>}
               {application.remote && <span className="text-gray-500"> · {titleCase(application.remote)}</span>}
             </dd>
             <dt className="text-gray-500">Salary range</dt>
-            <dd>{application.salary_range || <span className="text-gray-400">—</span>}</dd>
+            <dd>{application.salary_range || <span className="text-gray-400">-</span>}</dd>
             <dt className="text-gray-500">Job posting</dt>
             <dd>
               {application.jd_url ? (
@@ -143,12 +143,12 @@ export function ApplicationDetail() {
                   {application.jd_url}
                 </a>
               ) : (
-                <span className="text-gray-400">—</span>
+                <span className="text-gray-400">-</span>
               )}
             </dd>
             <dt className="text-gray-500">Notes</dt>
             <dd className="whitespace-pre-wrap">
-              {application.notes || <span className="text-gray-400">—</span>}
+              {application.notes || <span className="text-gray-400">-</span>}
             </dd>
           </dl>
         </>

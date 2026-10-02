@@ -39,7 +39,7 @@ async function refOwned(
 
 async function list(req: VercelRequest, res: VercelResponse, uid: number) {
   const q = qparam(req, 'q') ?? null
-  // comma-separated: ?status=lead,applied,screen — multi-select on the client
+  // comma-separated: ?status=lead,applied,screen - multi-select on the client
   const statusParam = qparam(req, 'status') ?? null
   const statuses = statusParam ? statusParam.split(',').filter(Boolean) : null
   const companyId = qparam(req, 'company_id') ?? null

@@ -5,7 +5,7 @@ import { getId, methodNotAllowed, parseBody, withErrors } from './_http.js'
 import { tokenCreate } from '../src/schemas/index.js'
 
 /**
- * Worker bearer tokens. Session-auth only — the operator manages these in the
+ * Worker bearer tokens. Session-auth only - the operator manages these in the
  * webapp. The raw token is shown exactly once, on create.
  */
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {

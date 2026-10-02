@@ -2,7 +2,7 @@
  * The matching / proposal / apply logic behind /api/inbound.
  *
  * `callback` never models email. Input here is the worker's extracted structure
- * (`Extracted`); output is a `proposal` — an ordered list of typed ops the
+ * (`Extracted`); output is a `proposal` - an ordered list of typed ops the
  * operator approves in the review UI. Nothing in this file writes domain data
  * until `applyProposal` runs, and that runs as one atomic statement.
  */
@@ -60,7 +60,7 @@ export async function matchEntities(
   const contact = await matchContact(uid, senderEmail, senderName)
 
   // thread continuity: reuse the application a prior message in this thread
-  // resolved to — only meaningful for the first/primary opportunity.
+  // resolved to - only meaningful for the first/primary opportunity.
   let threadPriorApp: number | null = null
   let threadPriorCompany: number | null = null
   if (threadKey) {
@@ -102,7 +102,7 @@ export async function matchEntities(
     companies.push(company)
 
     // a company that's ambiguous or not yet on file has no applications to
-    // search among — matching anyway (ignoring company entirely) is how an
+    // search among - matching anyway (ignoring company entirely) is how an
     // unrelated role at a different company used to show up as a candidate.
     const priorApp = i === 0 ? threadPriorApp : null
     const application =
@@ -142,7 +142,7 @@ async function matchContact(
 }
 
 /** only called once a company is confidently resolved (or thread continuity
- *  overrides it) — never with `companyId: null` scanning every company, which
+ *  overrides it) - never with `companyId: null` scanning every company, which
  *  used to surface unrelated applications as "candidates" for a role that in
  *  fact belongs to a company not yet on file (see matchEntities). */
 async function matchApplication(
@@ -163,7 +163,7 @@ async function matchApplication(
   `
   const candidates: MatchCandidate[] = rows.map((r) => ({
     id: Number(r.id),
-    label: `${r.company_name} — ${r.role_title} · ${r.status}`,
+    label: `${r.company_name} - ${r.role_title} · ${r.status}`,
     score: Number(r.score),
   }))
   if (threadPriorApp) return { chosen: threadPriorApp, candidates }
@@ -224,7 +224,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
   const agency = ex.sender?.is_agency_recruiter === true
   const opportunities = opportunitiesOf(ex)
   // >1 opportunity only happens when the operator explicitly named several
-  // distinct roles/companies to pursue in one email (see extract.system.md) —
+  // distinct roles/companies to pursue in one email (see extract.system.md) -
   // an explicit decision, unlike a passive single agency pitch. That earns two
   // deviations from the single-opportunity rule below: an agency-sourced
   // company/application gets created anyway, and each defaults to accepted
@@ -296,7 +296,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
           },
           refs: companyRef ? { company_id: companyRef } : undefined,
           decision: 'accept',
-          reason: 'no matching application — will create one',
+          reason: 'no matching application - will create one',
         })
       } else {
         // recruiter_outreach / status_update etc. with a named company but no app:
@@ -307,7 +307,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
           args: { role_title: clean(opp.role?.title) || '(role not stated)', status: 'lead' },
           refs: companyRef ? { company_id: companyRef } : undefined,
           decision: 'skip',
-          reason: 'optional — only if you want to track this as an application',
+          reason: 'optional - only if you want to track this as an application',
         })
         appRef = null
       }
@@ -343,17 +343,17 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
         },
         refs: primaryCompanyRef && !agency ? { company_id: '$c1' } : undefined,
         decision: noReply ? 'skip' : 'accept',
-        reason: noReply ? 'no-reply address — usually not worth a contact' : undefined,
+        reason: noReply ? 'no-reply address - usually not worth a contact' : undefined,
       })
     }
   }
 
-  // --- event — exactly one per submission ------------------------------
+  // --- event - exactly one per submission ------------------------------
   // A forwarded email is one event, no matter how many companies/applications
   // it produced (there's exactly one conversation with the sender). Single
   // opportunity: attach to that application + the contact, as before. Several
   // opportunities: no single one of them "owns" the email, so attach to the
-  // contact only; if there's no contact either (rare — no-reply, no name),
+  // contact only; if there's no contact either (rare - no-reply, no name),
   // fall back to whichever application exists so it lands somewhere.
   const eventRefs: Record<string, string> = {}
   if (opportunities.length === 1 && appRefs[0]) eventRefs.application_id = appRefs[0]
@@ -433,13 +433,13 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
   }
 
   // resolve each op to a literal id or a CTE alias. A link op's id is stored
-  // as the raw value, NOT yet bound as a $N parameter — a proposal where
+  // as the raw value, NOT yet bound as a $N parameter - a proposal where
   // every entity is linked (not created) commonly has one that nothing else
   // ever references (e.g. link_company when only its application and
   // contact end up wired into add_event/set_status). Binding it eagerly
   // here left a $N in `params` with no matching placeholder anywhere in the
   // generated SQL text, which postgres rejects outright ("could not
-  // determine data type of parameter $N") rather than just ignoring —
+  // determine data type of parameter $N") rather than just ignoring -
   // so `refExpr` below allocates (and memoizes) the placeholder lazily, only
   // for ids actually referenced by something.
   type Resolved = { kind: 'lit'; value: number } | { kind: 'cte'; alias: string }
@@ -510,7 +510,7 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         const role = clean(A('role_title') as string) || '(role not stated)'
         const st = (A('status') as string) || 'lead'
         // an application created straight into 'applied' (or later) implies
-        // the applying already happened — default the date to when the
+        // the applying already happened - default the date to when the
         // underlying email/event occurred, same fallback add_event uses,
         // rather than leaving it null. An explicit args.applied_at (the
         // reviewer typed one in) always wins.
@@ -575,7 +575,7 @@ export function buildApplyPlan(ops: ProposalOp[], ctx: ApplyCtx): ApplyPlan | { 
         resultAliases[op.id] = `op_${op.id}`
         break
       }
-      // link_* ops contribute no SQL — already resolved to a literal id
+      // link_* ops contribute no SQL - already resolved to a literal id
     }
   }
 

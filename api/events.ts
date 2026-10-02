@@ -112,7 +112,7 @@ async function update(req: VercelRequest, res: VercelResponse, uid: number, id: 
 }
 
 async function remove(res: VercelResponse, uid: number, id: number) {
-  // status_change events are a system audit trail — not user-deletable. Every
+  // status_change events are a system audit trail - not user-deletable. Every
   // other type is (including AI-sourced ones the user wants to correct).
   const rows = await sql`
     delete from events

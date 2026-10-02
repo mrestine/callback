@@ -74,7 +74,7 @@ export function Review() {
               {rows.map((r: InboundRow) => (
                 <tr key={r.id} className="border-b border-gray-100 last:border-0 dark:border-gray-900">
                   <td className="px-3 py-2 whitespace-nowrap text-gray-600 dark:text-gray-400">
-                    {r.email_kind ? titleCase(r.email_kind) : '—'}
+                    {r.email_kind ? titleCase(r.email_kind) : '-'}
                   </td>
                   <td className="px-3 py-2">
                     <Link

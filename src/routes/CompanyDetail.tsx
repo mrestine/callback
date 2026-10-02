@@ -82,11 +82,11 @@ export function CompanyDetail() {
                 {company.careers_url}
               </a>
             ) : (
-              <span className="text-gray-400">—</span>
+              <span className="text-gray-400">-</span>
             )}
           </dd>
           <dt className="text-gray-500">Notes</dt>
-          <dd className="whitespace-pre-wrap">{company.notes || <span className="text-gray-400">—</span>}</dd>
+          <dd className="whitespace-pre-wrap">{company.notes || <span className="text-gray-400">-</span>}</dd>
           <dt className="text-gray-500">Added</dt>
           <dd className="text-gray-600 dark:text-gray-400">{formatDate(company.created_at)}</dd>
         </dl>

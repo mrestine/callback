@@ -27,7 +27,7 @@ export function ContactForm({
   submitLabel = 'Save',
 }: {
   defaultValues?: Partial<FormValues>
-  /** The currently-linked company, for edit mode — omit when creating. */
+  /** The currently-linked company, for edit mode - omit when creating. */
   defaultCompany?: AutocompleteOption | null
   /** Should reject on failure so field errors can be surfaced. */
   onSubmit: (values: ContactInput) => Promise<unknown>

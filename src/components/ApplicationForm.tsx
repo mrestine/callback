@@ -21,7 +21,7 @@ export function ApplicationForm({
 }: {
   defaultValues?: Partial<FormValues>
   /** The currently-linked company/contact, for edit mode (so the field shows
-   *  a name instead of starting blank) — omit when creating. */
+   *  a name instead of starting blank) - omit when creating. */
   defaultCompany?: AutocompleteOption | null
   defaultContact?: AutocompleteOption | null
   /** Should reject on failure so field errors can be surfaced. */
@@ -102,7 +102,7 @@ export function ApplicationForm({
         </Field>
         <Field label="Remote" error={errors.remote?.message}>
           <SelectField {...register('remote')}>
-            <option value="">— unspecified —</option>
+            <option value="">- unspecified -</option>
             {REMOTE_MODES.map((m) => (
               <option key={m} value={m}>
                 {titleCase(m)}

@@ -1,6 +1,6 @@
 /**
  * Deletes every row owned by the test user (id 999). Scoped to user_id = 999 and
- * nothing else — never run an unscoped DELETE against this database.
+ * nothing else - never run an unscoped DELETE against this database.
  */
 import { config } from 'dotenv'
 import { neon } from '@neondatabase/serverless'

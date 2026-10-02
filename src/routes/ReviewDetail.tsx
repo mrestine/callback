@@ -56,7 +56,7 @@ function initArgs(op: ProposalOp, ex: InboundExtracted | undefined, occurredAt: 
   if (op.op === 'link_application' || op.op === 'create_application') {
     a.role_title ||= ex?.role.title ?? ''
     a.status ||= ex?.status_signal ?? 'applied'
-    // a non-lead status implies the applying already happened — pre-fill the
+    // a non-lead status implies the applying already happened - pre-fill the
     // date instead of leaving it for the reviewer to notice is missing
     // (matches the same fallback the backend applies if this is left blank).
     if (!a.applied_at && a.status !== 'lead') a.applied_at = toDateInput(occurredAt)
@@ -83,23 +83,23 @@ export function ReviewDetail() {
 
   // AI match candidates from older stored proposals (or an application
   // matched with no company scoping) may not carry a company name in their
-  // label — backfill it client-side from the live applications list so it
+  // label - backfill it client-side from the live applications list so it
   // never depends on re-submitting the email.
   const appsQuery = useApplications({})
   const companyByAppId = useMemo(() => {
     const m = new Map<number, string>()
     // `id` comes back from Postgres bigint as a string over JSON on this API
-    // (unlike _inbound.ts's match candidates, which coerce it) — Number() both
+    // (unlike _inbound.ts's match candidates, which coerce it) - Number() both
     // sides so the Map lookup below isn't a silent string/number mismatch.
     for (const a of appsQuery.data ?? []) if (a.company_name) m.set(Number(a.id), a.company_name)
     return m
   }, [appsQuery.data])
   const withCompany = (c: MatchCandidate): string => {
     const name = companyByAppId.get(c.id)
-    return name && !c.label.startsWith(name) ? `${name} — ${c.label}` : c.label
+    return name && !c.label.startsWith(name) ? `${name} - ${c.label}` : c.label
   }
 
-  // lazily seed local state once the proposal has loaded — a link op's initial
+  // lazily seed local state once the proposal has loaded - a link op's initial
   // `chosen` becomes a full {id,label} option (not just an id) so refLabels /
   // the Autocomplete never need to re-derive a label from op.match.candidates.
   const opState =
@@ -121,7 +121,7 @@ export function ReviewDetail() {
     )
 
   // "where this is going" for every op, resolved from its CURRENT (possibly
-  // reviewer-edited) state — a new company/application shows "new company: X",
+  // reviewer-edited) state - a new company/application shows "new company: X",
   // a picked link shows the candidate's label. Keyed by op id so add_event and
   // create/link_application can point at it via refs.
   const refLabels = useMemo(() => {
@@ -228,7 +228,7 @@ export function ReviewDetail() {
 
       <dl className="mb-6 grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs text-gray-500">
         <dt>Occurred</dt>
-        <dd>{formatDate(row.occurred_at) || '—'}</dd>
+        <dd>{formatDate(row.occurred_at) || '-'}</dd>
         <dt>Source</dt>
         <dd>
           {row.source} · {row.external_ref}
@@ -251,7 +251,7 @@ export function ReviewDetail() {
         <AppliedList row={row} />
       ) : ops.length === 0 ? (
         <p className="text-sm text-gray-500">
-          Nothing proposed — this was classified as noise. Dismiss to clear it.
+          Nothing proposed - this was classified as noise. Dismiss to clear it.
         </p>
       ) : (
         <div className="space-y-3">
@@ -334,7 +334,7 @@ function ExtractedPanel({ ex }: { ex: InboundExtracted }) {
 }
 
 function AppliedList({ row }: { row: { applied: InboundRowApplied[] | null; status: string; error: string | null } }) {
-  if (row.status === 'dismissed') return <p className="text-sm text-gray-500">Dismissed — no changes made.</p>
+  if (row.status === 'dismissed') return <p className="text-sm text-gray-500">Dismissed - no changes made.</p>
   if (row.error) return <ErrorNote error={new Error(row.error)} />
   if (!row.applied || row.applied.length === 0)
     return <p className="text-sm text-gray-500">No op results recorded.</p>
@@ -373,7 +373,7 @@ function OpCard({
   const useOptionsForOp = isCompany ? useCompanyOptions : isApplication ? useApplicationOptions : useContactOptions
   // the AI's already-scored candidates (≤5), shown before the reviewer types
   // anything; typing searches live across every company/contact/application,
-  // not just those top picks — sorted by confidence, highest first.
+  // not just those top picks - sorted by confidence, highest first.
   const seedOptions: AutocompleteOption[] = [...(op.match?.candidates ?? [])]
     .sort((a, b) => b.score - a.score)
     .map((c) => ({ id: c.id, label: isApplication ? withCompany(c) : c.label }))
@@ -464,7 +464,7 @@ function OpCard({
                   onChange={(e) => {
                     const status = e.target.value
                     // switching to a non-lead status implies applying already
-                    // happened — default the date to today if nothing's set
+                    // happened - default the date to today if nothing's set
                     const applied_at = s.args.applied_at || (status !== 'lead' ? todayInput() : '')
                     onChange({ args: { ...s.args, status, applied_at } })
                   }}
@@ -500,7 +500,7 @@ function OpCard({
               </Field>
               <Field label="Remote">
                 <SelectField value={s.args.remote ?? ''} onChange={(e) => onChange({ args: { ...s.args, remote: e.target.value } })}>
-                  <option value="">— unspecified —</option>
+                  <option value="">- unspecified -</option>
                   {REMOTE_MODES.map((m) => (
                     <option key={m} value={m}>
                       {titleCase(m)}

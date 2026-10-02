@@ -16,7 +16,7 @@ export function qparam(req: VercelRequest, key: string): string | undefined {
 
 /**
  * Validates `req.body` against `schema`. On failure sends a 400 with the Zod
- * issues and returns null — callers do `if (!data) return`.
+ * issues and returns null - callers do `if (!data) return`.
  */
 export function parseBody<S extends ZodTypeAny>(
   schema: S,
