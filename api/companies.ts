@@ -21,7 +21,7 @@ const MAX_MATCH_NAMES = 20
  * first, at most 5. `chosen` is THE verdict on whether one of them is the same
  * company (an exact name, or a score of SAME_COMPANY_SCORE+). It is the only
  * place that is decided: the inbound pipeline links to a company iff `chosen`
- * is set, and the lookup route below reports `exists` as `chosen !== null`.
+ * is set, and the lookup route below reports exactly that company as `match`.
  */
 export async function matchCompany(uid: number, name: string): Promise<CompanyMatch> {
   const rows = await sql`
@@ -53,11 +53,12 @@ function matchNames(req: VercelRequest): string[] {
 
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
   // GET ?match=<name> (repeat the param for several names): does a company
-  // by this name already exist? Answers per name, in order, with the verdict
-  // (`exists`) and the candidates behind it. The ingestion worker calls this
-  // with its bearer token. Only this lookup accepts a token; every other
-  // route in this file stays session-only, so the token can't list, edit or
-  // delete.
+  // by this name already exist? Answers per name, in order, with `match`: the
+  // one company the inbound pipeline would link to (or null). Callers get no
+  // candidate list, so none of them can end up re-implementing "which
+  // candidate wins". The ingestion worker calls this with its bearer token.
+  // Only this lookup accepts a token; every other route in this file stays
+  // session-only, so the token can't list, edit or delete.
   const names = req.method === 'GET' ? matchNames(req) : []
   if (names.length > 0) {
     const who = await requireTokenOrAuth(req, res)
@@ -68,7 +69,8 @@ export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
     const results = await Promise.all(
       names.map(async (name) => {
         const { chosen, candidates } = await matchCompany(who.uid, name)
-        return { name, exists: chosen !== null, candidates }
+        const match = candidates.find((c) => c.id === chosen) ?? null
+        return { name, exists: match !== null, match }
       }),
     )
     return void res.status(200).json({ results })

@@ -128,27 +128,31 @@ async function scenarioRoute() {
   await sql`insert into api_tokens (user_id, name, token_hash) values (${TEST_UID}, 'test-companies', ${hashToken(raw)})`
   const bearer = { authorization: `Bearer ${raw}` }
 
-  type Result = { name: string; exists: boolean; candidates: { label: string }[] }
+  type Match = { id: number; label: string; score: number } | null
+  type Result = { name: string; exists: boolean; match: Match }
   const resultsOf = (r: { body?: Record<string, unknown> }) => (r.body?.results ?? []) as Result[]
+  const ashbyId = Number((await sql`select id from companies where user_id = ${TEST_UID} and name = 'Ashby'`)[0].id)
 
   const ok = await call({ method: 'GET', query: { match: 'Ashby' }, headers: bearer })
   check('bearer token -> 200', ok.status === 200, ok)
   check('response is { results } only', Object.keys(ok.body ?? {}).join() === 'results', ok.body)
   check('a single name (string) -> one result', resultsOf(ok).length === 1, ok.body)
-  check('known company -> exists: true, with its candidate', resultsOf(ok)[0]?.exists === true && resultsOf(ok)[0].candidates[0]?.label === 'Ashby', ok.body)
+  const first = resultsOf(ok)[0]
+  check('known company -> exists: true, match is that company', first?.exists === true && first.match?.id === ashbyId && first.match.label === 'Ashby', first)
+  check('a result carries name, exists, match and nothing else', Object.keys(first ?? {}).sort().join() === 'exists,match,name', first)
 
   const many = await call({ method: 'GET', query: { match: ['Ashby', 'Zzyzx Holdings', 'Bright'] }, headers: bearer })
   const rs = resultsOf(many)
   check('several names (array) -> one result per name, in order', rs.map((r) => r.name).join('|') === 'Ashby|Zzyzx Holdings|Bright', many.body)
-  check('unknown company -> exists: false, no candidates', rs[1]?.exists === false && rs[1].candidates.length === 0, rs[1])
-  check('weak match -> exists: false BUT candidates still returned', rs[2]?.exists === false && rs[2].candidates.length > 0, rs[2])
+  check('unknown company -> exists: false, match: null', rs[1]?.exists === false && rs[1].match === null, rs[1])
+  check('weak match -> exists: false, match: null (near-misses are not exposed)', rs[2]?.exists === false && rs[2].match === null, rs[2])
 
-  // the route must not carry its own idea of "same company": for every name,
-  // exists has to equal the pipeline's own verdict from matchCompany
+  // the route must not carry its own idea of "same company": for every name
+  // it has to return exactly the company the pipeline would link to
   const names = ['Ashby', 'ASHBY', 'Bright', 'Brightwell Labs', 'Zzyzx Holdings', 'Zephyr']
   const agree = await call({ method: 'GET', query: { match: names }, headers: bearer })
-  const verdicts = await Promise.all(names.map(async (n) => (await matchCompany(TEST_UID, n)).chosen !== null))
-  check('exists agrees with matchCompany().chosen for every name', resultsOf(agree).every((r, i) => r.exists === verdicts[i]), { got: resultsOf(agree).map((r) => r.exists), want: verdicts })
+  const chosen = await Promise.all(names.map(async (n) => (await matchCompany(TEST_UID, n)).chosen))
+  check('match.id equals matchCompany().chosen for every name', resultsOf(agree).every((r, i) => (r.match?.id ?? null) === chosen[i] && r.exists === (chosen[i] !== null)), { got: resultsOf(agree).map((r) => r.match?.id ?? null), want: chosen })
 
   const blanks = await call({ method: 'GET', query: { match: ['', '  ', 'Ashby'] }, headers: bearer })
   check('blank names are ignored', resultsOf(blanks).length === 1 && resultsOf(blanks)[0].name === 'Ashby', blanks.body)
