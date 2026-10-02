@@ -6,6 +6,7 @@
  * operator approves in the review UI. Nothing in this file writes domain data
  * until `applyProposal` runs, and that runs as one atomic statement.
  */
+import { matchCompany } from './companies.js'
 import { sql } from './_db.js'
 import type {
   Extracted,
@@ -138,26 +139,6 @@ async function matchContact(
   }))
   const exact = rows.find((r) => email && String(r.email ?? '').toLowerCase() === email)
   return { chosen: exact ? Number(exact.id) : null, candidates }
-}
-
-async function matchCompany(uid: number, name: string): Promise<EntityMatch> {
-  const rows = await sql`
-    select id, name, similarity(name, ${name}) as score
-    from companies
-    where user_id = ${uid}
-      and (name ilike ${'%' + name + '%'} or similarity(name, ${name}) > 0.3)
-    order by score desc
-    limit 5
-  `
-  const candidates: MatchCandidate[] = rows.map((r) => ({
-    id: Number(r.id),
-    label: String(r.name),
-    score: Number(r.score),
-  }))
-  const top = rows[0]
-  const confident =
-    top && (String(top.name).toLowerCase() === name.toLowerCase() || Number(top.score) >= 0.6)
-  return { chosen: confident ? Number(top.id) : null, candidates }
 }
 
 /** only called once a company is confidently resolved (or thread continuity

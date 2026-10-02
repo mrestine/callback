@@ -1,10 +1,53 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { sql } from './_db.js'
-import { requireAuth } from './_auth.js'
+import { requireAuth, requireTokenOrAuth } from './_auth.js'
 import { getId, methodNotAllowed, parseBody, qparam, withErrors } from './_http.js'
 import { companyCreate, companyUpdate } from '../src/schemas/index.js'
+import type { MatchCandidate } from '../src/schemas/index.js'
+
+export interface CompanyMatch {
+  chosen: number | null
+  candidates: MatchCandidate[]
+}
+
+/**
+ * Companies of `uid` that look like `name`: substring or trigram match, best
+ * first, at most 5. `chosen` is the deterministic verdict used by the inbound
+ * pipeline (an exact name or a score of 0.6+); the lookup route below returns
+ * only `candidates`, leaving the "is this the same company" call to its caller.
+ */
+export async function matchCompany(uid: number, name: string): Promise<CompanyMatch> {
+  const rows = await sql`
+    select id, name, similarity(name, ${name}) as score
+    from companies
+    where user_id = ${uid}
+      and (name ilike ${'%' + name + '%'} or similarity(name, ${name}) > 0.3)
+    order by score desc
+    limit 5
+  `
+  const candidates: MatchCandidate[] = rows.map((r) => ({
+    id: Number(r.id),
+    label: String(r.name),
+    score: Number(r.score),
+  }))
+  const top = rows[0]
+  const confident =
+    top && (String(top.name).toLowerCase() === name.toLowerCase() || Number(top.score) >= 0.6)
+  return { chosen: confident ? Number(top.id) : null, candidates }
+}
 
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
+  // GET ?match=<name>: the ingestion worker looks a company up by name with
+  // its bearer token. Only this lookup accepts a token; every other route in
+  // this file stays session-only, so the token can't list, edit or delete.
+  const matchName = req.method === 'GET' ? qparam(req, 'match') : undefined
+  if (matchName) {
+    const who = await requireTokenOrAuth(req, res)
+    if (!who) return
+    const { candidates } = await matchCompany(who.uid, matchName)
+    return void res.status(200).json({ candidates })
+  }
+
   const auth = requireAuth(req, res)
   if (!auth) return
   const { uid } = auth
