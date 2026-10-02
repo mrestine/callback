@@ -239,6 +239,10 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
     const n = i + 1
     const withheld = opp.hiring_company?.withheld === true
     const companyName = clean(opp.hiring_company?.name)
+    // the worker's short description of a company new to the tracker; becomes
+    // the new company's notes (buildApplyPlan's create_company already inserts
+    // args.notes)
+    const companyNotes = clean(opp.hiring_company?.notes)
     const companyKnown = (!agency || isMulti) && !withheld && !!companyName
     const companyMatch = match.companies[i] ?? empty()
     const applicationMatch = match.applications[i] ?? empty()
@@ -250,6 +254,10 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
         ops.push({
           id: `c${n}`,
           op: 'link_company',
+          // defaults for the review form if the reviewer switches this link to
+          // "create new"; a link never writes them (it only points at an
+          // existing row), so an existing company's notes are never touched
+          args: companyNotes ? { notes: companyNotes } : undefined,
           match: companyMatch,
           decision: 'accept',
           reason: companyMatch.chosen == null ? 'pick the company or switch to create' : undefined,
@@ -258,7 +266,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
         ops.push({
           id: `c${n}`,
           op: 'create_company',
-          args: { name: companyName },
+          args: { name: companyName, ...(companyNotes ? { notes: companyNotes } : {}) },
           decision: 'accept',
           reason: 'no company on file with this name',
         })

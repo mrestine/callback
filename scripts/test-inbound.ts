@@ -9,6 +9,7 @@
 import 'dotenv/config'
 import { neon } from '@neondatabase/serverless'
 import { matchEntities, proposeOps, buildApplyPlan } from '../api/_inbound.ts'
+import { inboundSubmit } from '../src/schemas/index.ts'
 import type { Extracted } from '../src/schemas/index.ts'
 
 const TEST_UID = 999
@@ -367,6 +368,94 @@ async function scenarioMultiOpportunity() {
   check('exactly one events row written to the DB (not 3)', evs.length === 1 && evs[0].contact_id === cts[0].id && evs[0].application_id === null, evs)
 }
 
+async function scenarioCompanyNotes() {
+  console.log('\n# hiring_company.notes: contract, mapping to company notes on accept, never overwrites an existing company')
+
+  // --- the contract itself -------------------------------------------------
+  const base = {
+    external_ref: 'ref-notes',
+    source: 'test',
+    extracted: {
+      email_kind: 'application_confirmation',
+      sender: {},
+      hiring_company: { name: 'Veldrath', notes: '  Veldrath makes grain-sorting robots.  ' },
+      role: {},
+      event: {},
+    },
+  }
+  const parsed = inboundSubmit.safeParse(base)
+  check('contract accepts and trims hiring_company.notes', parsed.success && parsed.data.extracted.hiring_company.notes === 'Veldrath makes grain-sorting robots.', parsed.success ? parsed.data.extracted.hiring_company : parsed.error.issues)
+  const long = inboundSubmit.safeParse({ ...base, extracted: { ...base.extracted, hiring_company: { name: 'Veldrath', notes: 'x'.repeat(5000) } } })
+  check('over-long notes are cut to 2000, not rejected', long.success && long.data.extracted.hiring_company.notes?.length === 2000, long.success ? long.data.extracted.hiring_company.notes?.length : long.error.issues)
+  const absent = inboundSubmit.safeParse({ ...base, extracted: { ...base.extracted, hiring_company: { name: 'Veldrath' } } })
+  check('notes are optional', absent.success, absent.success ? null : absent.error.issues)
+
+  const noReply = { name: '', email: 'no-reply@mail.example', org: null, is_agency_recruiter: false, kind: 'other', confidence: 0.9 }
+  const exFor = (hc: Record<string, unknown>) =>
+    ({
+      job_related: true,
+      email_kind: 'application_confirmation',
+      sender: noReply,
+      hiring_company: { withheld: false, confidence: 0.9, ...hc },
+      role: { title: 'Engineer', confidence: 0.9 },
+      event: { type: 'email', subtype: null, occurred_at: null, summary: 'Application received.' },
+      status_signal: null,
+      notes: null,
+    }) as Extracted
+
+  // --- new company: notes land on the created company ----------------------
+  const desc = 'Veldrath makes grain-sorting robots. About 120 employees.'
+  const ex1 = exFor({ name: 'Veldrath', notes: desc })
+  const { ops: ops1 } = proposeOps(ex1, await matchEntities(TEST_UID, ex1, null))
+  const create = ops1.find((o) => o.op === 'create_company')
+  check('new company -> create_company carries the notes in args', create?.args?.notes === desc, create)
+  await runApply(await seedInbound(ex1, null, '2026-09-20T10:00:00Z'), ops1, '2026-09-20T10:00:00Z')
+  const [veldrath] = await sql`select notes from companies where user_id = ${TEST_UID} and name = 'Veldrath'`
+  check('accepting it stores the notes on the new company', veldrath?.notes === desc, veldrath)
+
+  // --- no notes: nothing invented ------------------------------------------
+  const ex2 = exFor({ name: 'Wexmoor' })
+  const { ops: ops2 } = proposeOps(ex2, await matchEntities(TEST_UID, ex2, null))
+  const create2 = ops2.find((o) => o.op === 'create_company')
+  check('no notes -> create_company has no notes key', !!create2 && !('notes' in (create2.args ?? {})), create2)
+  await runApply(await seedInbound(ex2, null, '2026-09-20T11:00:00Z'), ops2, '2026-09-20T11:00:00Z')
+  const [wexmoor] = await sql`select notes from companies where user_id = ${TEST_UID} and name = 'Wexmoor'`
+  check('...and the company is created with null notes', wexmoor && wexmoor.notes === null, wexmoor)
+
+  // --- existing company: its own notes are never touched -------------------
+  await sql`insert into companies (user_id, name, notes) values (${TEST_UID}, 'Tarnwick', 'my own notes')`
+  const ex3 = exFor({ name: 'Tarnwick', notes: 'AI description that must not overwrite' })
+  const { ops: ops3 } = proposeOps(ex3, await matchEntities(TEST_UID, ex3, null))
+  check('existing company -> linked, not created', ops3.some((o) => o.op === 'link_company' && o.match?.chosen != null) && !ops3.some((o) => o.op === 'create_company'), ops3)
+  await runApply(await seedInbound(ex3, null, '2026-09-20T12:00:00Z'), ops3, '2026-09-20T12:00:00Z')
+  const [tarnwick] = await sql`select notes from companies where user_id = ${TEST_UID} and name = 'Tarnwick'`
+  check("applying a link leaves the existing company's notes untouched", tarnwick?.notes === 'my own notes', tarnwick)
+
+  // --- near miss: link op carries the notes as conversion defaults ---------
+  await sql`insert into companies (user_id, name) values (${TEST_UID}, 'Quorvath')`
+  const ex4 = exFor({ name: 'The Quorvath Company', notes: 'Quorvath builds kiln controllers.' })
+  const m4 = await matchEntities(TEST_UID, ex4, null)
+  const { ops: ops4 } = proposeOps(ex4, m4)
+  const link4 = ops4.find((o) => o.op === 'link_company')
+  check('near miss -> an unresolved link_company (callback could not choose)', !!link4 && link4.match?.chosen == null && (link4.match?.candidates.length ?? 0) > 0, link4)
+  check('...that carries the notes as defaults for "create new"', link4?.args?.notes === 'Quorvath builds kiln controllers.', link4)
+
+  // --- several companies: each description stays with its own company ------
+  const agency = { name: 'Dee Okoro', email: 'dee.okoro@staffing.example', org: 'Staffing Co', is_agency_recruiter: true, kind: 'recruiter', confidence: 0.9 }
+  const ex5 = {
+    ...exFor({ name: 'Zanthor', notes: 'Zanthor makes drone batteries.' }),
+    sender: agency,
+    email_kind: 'recruiter_outreach',
+    additional_opportunities: [
+      { hiring_company: { name: 'Plumeria Labs', withheld: false, confidence: 0.9, notes: 'Plumeria Labs does protein design.' }, role: { title: 'Backend Engineer', confidence: 0.9 } },
+    ],
+  } as Extracted
+  const { ops: ops5 } = proposeOps(ex5, await matchEntities(TEST_UID, ex5, null))
+  const byId = (id: string) => ops5.find((o) => o.id === id)
+  check('first company keeps its own notes', byId('c1')?.args?.name === 'Zanthor' && byId('c1')?.args?.notes === 'Zanthor makes drone batteries.', byId('c1'))
+  check('additional company gets ITS notes, not the first one', byId('c2')?.args?.name === 'Plumeria Labs' && byId('c2')?.args?.notes === 'Plumeria Labs does protein design.', byId('c2'))
+}
+
 async function main() {
   await reset()
   try {
@@ -377,6 +466,7 @@ async function main() {
     await scenarioAssessmentInviteDefaultsToTechnical()
     await scenarioBareDateEventNeverUtcMidnight()
     await scenarioMultiOpportunity()
+    await scenarioCompanyNotes()
   } finally {
     await reset()
   }

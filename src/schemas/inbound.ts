@@ -36,12 +36,30 @@ export type EmailKind = (typeof EMAIL_KINDS)[number]
 const nullableStr = z.string().trim().max(2000).nullish().transform((v) => v ?? null)
 const confidence = z.number().min(0).max(1).nullish().transform((v) => v ?? null)
 
+/** Cap on hiring_company.notes. Longer input is cut, not rejected: an optional
+ *  decoration must never be the reason a whole submission bounces. */
+const NOTES_MAX = 2000
+const optionalNotes = z
+  .string()
+  .nullish()
+  .transform((v) => (v ? v.trim().slice(0, NOTES_MAX) || null : null))
+
+const hiringCompany = z
+  .object({
+    name: nullableStr,
+    withheld: z.boolean().nullish().transform((v) => v ?? false),
+    confidence,
+    /** A short plain-fact description of the company. Added by the worker (not
+     *  the extraction model) only for a company new to the tracker; becomes
+     *  that company's `notes` when the proposal is accepted. */
+    notes: optionalNotes,
+  })
+  .partial()
+  .passthrough()
+
 const opportunity = z
   .object({
-    hiring_company: z
-      .object({ name: nullableStr, withheld: z.boolean().nullish().transform((v) => v ?? false), confidence })
-      .partial()
-      .passthrough(),
+    hiring_company: hiringCompany,
     role: z.object({ title: nullableStr, confidence }).partial().passthrough(),
   })
   .partial()
@@ -68,14 +86,7 @@ export const extractedSchema = z
       })
       .partial()
       .passthrough(),
-    hiring_company: z
-      .object({
-        name: nullableStr,
-        withheld: z.boolean().nullish().transform((v) => v ?? false),
-        confidence,
-      })
-      .partial()
-      .passthrough(),
+    hiring_company: hiringCompany,
     role: z
       .object({ title: nullableStr, confidence })
       .partial()
