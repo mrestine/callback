@@ -44,6 +44,13 @@ const optionalNotes = z
   .nullish()
   .transform((v) => (v ? v.trim().slice(0, NOTES_MAX) || null : null))
 
+/** Cap on hiring_company.hq_location; cut, never rejected, like the notes. */
+const HQ_MAX = 200
+const optionalLocation = z
+  .string()
+  .nullish()
+  .transform((v) => (v ? v.trim().slice(0, HQ_MAX) || null : null))
+
 const hiringCompany = z
   .object({
     name: nullableStr,
@@ -53,6 +60,10 @@ const hiringCompany = z
      *  the extraction model) only for a company new to the tracker; becomes
      *  that company's `notes` when the proposal is accepted. */
     notes: optionalNotes,
+    /** Where the company is headquartered, found by the worker alongside the
+     *  description (so also only for a company new to the tracker). Prefills
+     *  the location of the application created for it. */
+    hq_location: optionalLocation,
   })
   .partial()
   .passthrough()

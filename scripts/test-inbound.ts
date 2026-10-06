@@ -477,6 +477,53 @@ async function scenarioCandidateCompanyNames() {
   check('a non-array proposal passes through', (await withApplicationCompanyNames(TEST_UID, null)) === null)
 }
 
+async function scenarioCompanyHq() {
+  console.log('\n# hiring_company.hq_location: contract, prefill of the new application location')
+
+  const noReply = { name: '', email: 'no-reply@mail.example', org: null, is_agency_recruiter: false, kind: 'other', confidence: 0.9 }
+  const exFor = (hc: Record<string, unknown>, kind = 'application_confirmation') =>
+    ({
+      job_related: true,
+      email_kind: kind,
+      sender: noReply,
+      hiring_company: { withheld: false, confidence: 0.9, ...hc },
+      role: { title: 'Engineer', confidence: 0.9 },
+      event: { type: 'email', subtype: null, occurred_at: null, summary: 'Application received.' },
+      status_signal: null,
+      notes: null,
+    }) as Extracted
+
+  // --- the contract --------------------------------------------------------
+  const base = { external_ref: 'ref-hq', source: 'test', extracted: { email_kind: 'application_confirmation', sender: {}, hiring_company: { name: 'Pellucid', hq_location: '  Boston, MA ' }, role: {}, event: {} } }
+  const parsed = inboundSubmit.safeParse(base)
+  check('contract accepts and trims hiring_company.hq_location', parsed.success && parsed.data.extracted.hiring_company.hq_location === 'Boston, MA', parsed.success ? parsed.data.extracted.hiring_company : parsed.error.issues)
+  const long = inboundSubmit.safeParse({ ...base, extracted: { ...base.extracted, hiring_company: { name: 'Pellucid', hq_location: 'x'.repeat(900) } } })
+  check('an over-long location is cut, not rejected', long.success && long.data.extracted.hiring_company.hq_location?.length === 200, long.success ? long.data.extracted.hiring_company.hq_location?.length : long.error.issues)
+  const absent = inboundSubmit.safeParse({ ...base, extracted: { ...base.extracted, hiring_company: { name: 'Pellucid' } } })
+  check('hq_location is optional', absent.success, absent.success ? null : absent.error.issues)
+
+  // --- new company: the location prefills the application ------------------
+  const ex1 = exFor({ name: 'Pellucid', hq_location: 'Boston, MA' })
+  const { ops: ops1 } = proposeOps(ex1, await matchEntities(TEST_UID, ex1, null))
+  const app1 = ops1.find((o) => o.op === 'create_application')
+  check('create_application carries the headquarters as its location', app1?.args?.location === 'Boston, MA', app1)
+  await runApply(await seedInbound(ex1, null, '2026-09-21T10:00:00Z'), ops1, '2026-09-21T10:00:00Z')
+  const [row] = await sql`select location from applications where user_id = ${TEST_UID} and role_title = 'Engineer' and company_id = (select id from companies where user_id = ${TEST_UID} and name = 'Pellucid')`
+  check('accepting it stores the location on the application', row?.location === 'Boston, MA', row)
+
+  // --- nothing sent: nothing invented --------------------------------------
+  const ex2 = exFor({ name: 'Orrinwick' })
+  const { ops: ops2 } = proposeOps(ex2, await matchEntities(TEST_UID, ex2, null))
+  const app2 = ops2.find((o) => o.op === 'create_application')
+  check('no hq_location -> no location key on the application', !!app2 && !('location' in (app2.args ?? {})), app2)
+
+  // --- the optional (skipped by default) application offer carries it too --
+  const ex3 = exFor({ name: 'Quillmark Dynamics', hq_location: 'Austin, TX' }, 'recruiter_outreach')
+  const { ops: ops3 } = proposeOps(ex3, await matchEntities(TEST_UID, ex3, null))
+  const app3 = ops3.find((o) => o.op === 'create_application')
+  check('an optional create_application is pre-filled as well', app3?.decision === 'skip' && app3.args?.location === 'Austin, TX', app3)
+}
+
 async function main() {
   await reset()
   try {
@@ -488,6 +535,7 @@ async function main() {
     await scenarioBareDateEventNeverUtcMidnight()
     await scenarioMultiOpportunity()
     await scenarioCompanyNotes()
+    await scenarioCompanyHq()
     await scenarioCandidateCompanyNames()
   } finally {
     await reset()

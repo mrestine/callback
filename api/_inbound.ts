@@ -277,6 +277,9 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
     // the new company's notes (buildApplyPlan's create_company already inserts
     // args.notes)
     const companyNotes = clean(opp.hiring_company?.notes)
+    // the company's headquarters, offered as the new application's location
+    // (the reviewer edits it; remote roles mean HQ is the only place that matters)
+    const companyHq = clean(opp.hiring_company?.hq_location)
     const companyKnown = (!agency || isMulti) && !withheld && !!companyName
     const companyMatch = match.companies[i] ?? empty()
     const applicationMatch = match.applications[i] ?? empty()
@@ -327,6 +330,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
           args: {
             role_title: clean(opp.role?.title) || '(role not stated)',
             status: initialStatus(kind, ex.status_signal),
+            ...(companyHq ? { location: companyHq } : {}),
           },
           refs: companyRef ? { company_id: companyRef } : undefined,
           decision: 'accept',
@@ -338,7 +342,11 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
         ops.push({
           id: `a${n}`,
           op: 'create_application',
-          args: { role_title: clean(opp.role?.title) || '(role not stated)', status: 'lead' },
+          args: {
+            role_title: clean(opp.role?.title) || '(role not stated)',
+            status: 'lead',
+            ...(companyHq ? { location: companyHq } : {}),
+          },
           refs: companyRef ? { company_id: companyRef } : undefined,
           decision: 'skip',
           reason: 'optional - only if you want to track this as an application',
