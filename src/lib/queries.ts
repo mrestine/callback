@@ -82,10 +82,11 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 // --- companies -----------------------------------------------------------
-export function useCompanies(q = '') {
+export function useCompanies(q = '', opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['companies', { q }],
     queryFn: () => api.get<Company[]>(`/api/companies${qs({ q })}`),
+    enabled: opts.enabled,
   })
 }
 
@@ -126,17 +127,19 @@ export function useDeleteCompany() {
   })
 }
 
-/** <Autocomplete> source for picking an existing company. */
+/** <Autocomplete> source for picking an existing company. Does nothing until
+ *  there is something to search for - pickers never load the whole list. */
 export function useCompanyOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
-  const companies = useCompanies(q)
+  const companies = useCompanies(q, { enabled: q.trim() !== '' })
   return { data: companies.data?.map((c) => ({ id: c.id, label: c.name })), isLoading: companies.isLoading }
 }
 
 // --- contacts ------------------------------------------------------------
-export function useContacts(filters: ContactFilters) {
+export function useContacts(filters: ContactFilters, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['contacts', filters],
     queryFn: () => api.get<Contact[]>(`/api/contacts${qs({ ...filters })}`),
+    enabled: opts.enabled,
   })
 }
 
@@ -177,9 +180,9 @@ export function useDeleteContact() {
   })
 }
 
-/** <Autocomplete> source for picking an existing contact. */
+/** <Autocomplete> source for picking an existing contact (idle until searched). */
 export function useContactOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
-  const contacts = useContacts({ q: q || undefined })
+  const contacts = useContacts({ q: q || undefined }, { enabled: q.trim() !== '' })
   return {
     data: contacts.data?.map((c) => ({ id: c.id, label: c.name, sublabel: c.company_name })),
     isLoading: contacts.isLoading,
@@ -197,9 +200,9 @@ function invalidateApplicationViews(qc: ReturnType<typeof useQueryClient>, id?: 
 }
 
 /** <Autocomplete> source for picking an existing application - always shown
- *  as "Company - Role", never role alone. */
+ *  as "Company - Role", never role alone. Idle until searched. */
 export function useApplicationOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
-  const applications = useApplications({ q: q || undefined })
+  const applications = useApplications({ q: q || undefined }, { enabled: q.trim() !== '' })
   return {
     data: applications.data?.map((a) => ({
       id: a.id,
@@ -210,13 +213,14 @@ export function useApplicationOptions(q: string): { data?: AutocompleteOption[];
   }
 }
 
-export function useApplications(filters: ApplicationFilters) {
+export function useApplications(filters: ApplicationFilters, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ['applications', filters],
     queryFn: () =>
       api.get<Application[]>(
         `/api/applications${qs({ q: filters.q, status: filters.status?.join(','), company_id: filters.company_id })}`,
       ),
+    enabled: opts.enabled,
   })
 }
 

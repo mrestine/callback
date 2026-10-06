@@ -7,6 +7,10 @@
  * those already go through TanStack Query, so repeated searches for the same
  * text are served from cache instead of re-hitting the API.
  *
+ * Nothing is fetched until the reviewer has typed something and the debounce
+ * has settled: focusing the field shows no options (other than `seedOptions`),
+ * so a picker never pulls a whole table.
+ *
  * Use this anywhere a picker resolves to an existing company/contact/
  * application. A handful of options from a fixed, small enum (event type,
  * application status, contact kind…) should stay a plain `<SelectField>`.
@@ -54,10 +58,10 @@ export function Autocomplete({
   disabled?: boolean
   id?: string
   invalid?: boolean
-  /** Shown before the reviewer types anything, instead of the unfiltered
-   *  `useOptions('')` list - e.g. a small set of already-scored/ranked
-   *  candidates a caller computed some other way. Typing still searches live
-   *  via `useOptions`. */
+  /** Shown before the reviewer types anything (otherwise nothing is shown
+   *  until they do) - e.g. a small set of already-scored/ranked candidates a
+   *  caller computed some other way. Typing still searches live via
+   *  `useOptions`. */
   seedOptions?: AutocompleteOption[]
 }) {
   const autoId = useId()
@@ -71,10 +75,14 @@ export function Autocomplete({
   const [touched, setTouched] = useState(false)
   const [highlight, setHighlight] = useState(0)
   const debounced = useDebouncedValue(query, 200)
-  const live = useOptions(open ? debounced : '')
+  // only search once something has been typed and the debounce has caught up
+  const searching = open && touched && debounced.trim() !== ''
+  const live = useOptions(searching ? debounced : '')
   const useSeed = !touched && seedOptions !== undefined
-  const options = useSeed ? seedOptions : live.data
-  const isLoading = useSeed ? false : live.isLoading
+  const options = useSeed ? seedOptions : searching ? live.data : undefined
+  // between a keystroke and the debounce firing there is nothing to show yet
+  const settling = touched && query.trim() !== debounced.trim()
+  const isLoading = useSeed ? false : settling || (searching && live.isLoading)
 
   // keep the displayed text in sync when the selection changes from outside
   // (a different op resolved, a form reset, etc.) while the field is closed
