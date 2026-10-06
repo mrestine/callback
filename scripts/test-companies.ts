@@ -179,12 +179,52 @@ async function scenarioRoute() {
   check('browser session also works', viaSession.status === 200, viaSession)
 }
 
+async function scenarioPagination() {
+  console.log('\n# GET /api/companies  (paged list: 20 per page)')
+  await sql`
+    insert into companies (user_id, name)
+    select ${TEST_UID}, 'Pgtest ' || lpad(n::text, 2, '0') from generate_series(0, 44) n
+  `
+  await sql`insert into companies (user_id, name) values (${OTHER_UID}, 'Pgtest Someone Else')`
+  const session = signSession({ uid: TEST_UID, login: 'test-bot' })
+  const headers = { cookie: `cb_session=${encodeURIComponent(session)}` }
+  type Body = { items: Record<string, unknown>[]; page: number; pageSize: number; total: number }
+  const get = async (page?: string) => {
+    const r = await call({ method: 'GET', query: { q: 'Pgtest', ...(page ? { page } : {}) }, headers })
+    return { status: r.status, body: r.body as unknown as Body }
+  }
+  const names = (b: Body) => b.items.map((i) => i.name as string)
+
+  const p1 = await get()
+  check('no ?page -> page 1, 20 items, total 45', p1.status === 200 && p1.body.page === 1 && p1.body.items.length === 20 && p1.body.total === 45 && p1.body.pageSize === 20, p1.body)
+  const p2 = await get('2')
+  const p3 = await get('3')
+  check('page 2 has 20, page 3 has the last 5', p2.body.items.length === 20 && p3.body.items.length === 5, [p2.body.items.length, p3.body.items.length])
+  const all = [...names(p1.body), ...names(p2.body), ...names(p3.body)]
+  check('pages are contiguous and in order, with no overlap or gap', all.length === 45 && new Set(all).size === 45 && all.join() === [...all].sort().join(), all)
+  check("another user's companies are not counted or listed", !all.includes('Pgtest Someone Else') && p1.body.total === 45)
+  check('the total column is not leaked into the rows', !('total' in p1.body.items[0]), p1.body.items[0])
+  check('rows keep their counts', typeof p1.body.items[0].contact_count === 'number', p1.body.items[0])
+
+  const past = await get('9')
+  check('a page past the end serves the last page', past.body.page === 3 && past.body.items.length === 5 && past.body.total === 45, past.body)
+  const junk = await get('abc')
+  check('a junk page number falls back to page 1', junk.body.page === 1 && junk.body.items.length === 20, junk.body)
+  const zero = await get('0')
+  check('page 0 falls back to page 1', zero.body.page === 1, zero.body)
+
+  const none = await call({ method: 'GET', query: { q: 'no such company zzz', page: '4' }, headers })
+  const nb = none.body as unknown as Body
+  check('no matches -> empty items, total 0, page 1', nb.items.length === 0 && nb.total === 0 && nb.page === 1, nb)
+}
+
 async function main() {
   await setup()
   try {
     await scenarioMatchCompany()
     await scenarioIsolation()
     await scenarioRoute()
+    await scenarioPagination()
   } finally {
     await teardown()
   }

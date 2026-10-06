@@ -4,6 +4,7 @@ import { ContactForm } from '../components/ContactForm'
 import { Badge, Button, EmptyState, ErrorNote, Field, Loading, PageHeader, SelectField, TextField } from '../components/ui'
 import { CONTACT_KINDS } from '../schemas'
 import { formatDate, titleCase } from '../lib/format'
+import { Pager, usePageParam } from '../components/Pager'
 import { useContacts, useCreateContact } from '../lib/queries'
 
 export function Contacts() {
@@ -12,7 +13,8 @@ export function Contacts() {
   const [kind, setKind] = useState('')
   const [creating, setCreating] = useState(false)
 
-  const contacts = useContacts({ q: q || undefined, kind: kind || undefined })
+  const [page, setPage] = usePageParam()
+  const contacts = useContacts({ q: q || undefined, kind: kind || undefined }, page)
   const create = useCreateContact()
 
   return (
@@ -22,7 +24,7 @@ export function Contacts() {
           <>
             Contacts{' '}
             {contacts.data && (
-              <span className="font-normal text-gray-400">· {contacts.data.length}</span>
+              <span className="font-normal text-gray-400">· {contacts.data.total}</span>
             )}
           </>
         }
@@ -45,12 +47,12 @@ export function Contacts() {
       <div className="mb-3 flex flex-wrap gap-3">
         <div className="max-w-xs flex-1">
           <Field label="Search">
-            <TextField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Name…" />
+            <TextField value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="Name…" />
           </Field>
         </div>
         <div className="w-40">
           <Field label="Kind">
-            <SelectField value={kind} onChange={(e) => setKind(e.target.value)}>
+            <SelectField value={kind} onChange={(e) => { setKind(e.target.value); setPage(1) }}>
               <option value="">All</option>
               {CONTACT_KINDS.map((k) => (
                 <option key={k} value={k}>
@@ -66,9 +68,10 @@ export function Contacts() {
         <Loading />
       ) : contacts.isError ? (
         <ErrorNote error={contacts.error} />
-      ) : contacts.data.length === 0 ? (
+      ) : contacts.data.items.length === 0 ? (
         <EmptyState>{q || kind ? 'No contacts match those filters.' : 'No contacts yet.'}</EmptyState>
       ) : (
+        <>
         <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
           <table className="w-full text-sm">
             <thead className="border-b border-gray-200 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-900">
@@ -81,7 +84,7 @@ export function Contacts() {
               </tr>
             </thead>
             <tbody>
-              {contacts.data.map((ct) => (
+              {contacts.data.items.map((ct) => (
                 <tr key={ct.id} className="border-b border-gray-100 last:border-0 dark:border-gray-900">
                   <td className="px-3 py-2">
                     <Link to={`/contacts/${ct.id}`} className="font-medium text-blue-600 hover:underline dark:text-blue-400">
@@ -109,6 +112,8 @@ export function Contacts() {
             </tbody>
           </table>
         </div>
+        <Pager data={contacts.data} onPage={setPage} />
+        </>
       )}
     </div>
   )

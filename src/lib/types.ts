@@ -13,6 +13,14 @@ export type Warmth = (typeof WARMTH_LEVELS)[number]
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number]
 export type RemoteMode = (typeof REMOTE_MODES)[number]
 
+/** One page of a paginated list endpoint (companies, contacts, applications). */
+export interface Page<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+}
+
 export interface Company {
   id: number
   name: string

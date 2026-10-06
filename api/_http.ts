@@ -55,3 +55,45 @@ export function withErrors(
     }
   }
 }
+
+/** Rows per page on every paginated list endpoint. */
+export const PAGE_SIZE = 20
+
+export interface Page<T> {
+  items: T[]
+  page: number
+  pageSize: number
+  total: number
+}
+
+/** `?page=` as a positive integer (default 1). */
+function getPage(req: VercelRequest): number {
+  const n = Number(qparam(req, 'page'))
+  return Number.isInteger(n) && n > 0 ? n : 1
+}
+
+/**
+ * Serves one page of a list endpoint. `fetchRows(limit, offset)` runs the
+ * endpoint's query with `limit ${limit} offset ${offset}` and selects
+ * `count(*) over() as total`, so one query gives both the page and the size
+ * of the whole filtered set. A page past the end falls back to the last page
+ * instead of coming back empty.
+ */
+export async function sendPage(
+  req: VercelRequest,
+  res: VercelResponse,
+  fetchRows: (limit: number, offset: number) => Promise<Record<string, unknown>[]>,
+): Promise<void> {
+  let page = getPage(req)
+  let rows = await fetchRows(PAGE_SIZE, (page - 1) * PAGE_SIZE)
+  if (rows.length === 0 && page > 1) {
+    // the total only rides along on real rows; learn it from page 1
+    const first = await fetchRows(PAGE_SIZE, 0)
+    page = Math.max(1, Math.ceil(Number(first[0]?.total ?? 0) / PAGE_SIZE))
+    rows = page === 1 ? first : await fetchRows(PAGE_SIZE, (page - 1) * PAGE_SIZE)
+  }
+  const total = Number(rows[0]?.total ?? 0)
+  const items = rows.map(({ total: _total, ...row }) => row)
+  const body: Page<unknown> = { items, page, pageSize: PAGE_SIZE, total }
+  res.status(200).json(body)
+}

@@ -1,4 +1,4 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import type {
   ApiToken,
@@ -17,6 +17,7 @@ import type {
   InboundDetail,
   InboundRow,
   NewApiToken,
+  Page,
   RemoteMode,
   Warmth,
 } from './types'
@@ -82,10 +83,11 @@ function qs(params: Record<string, string | number | undefined>): string {
 }
 
 // --- companies -----------------------------------------------------------
-export function useCompanies(q = '', opts: { enabled?: boolean } = {}) {
+export function useCompanies(q = '', page = 1, opts: { enabled?: boolean } = {}) {
   return useQuery({
-    queryKey: ['companies', { q }],
-    queryFn: () => api.get<Company[]>(`/api/companies${qs({ q })}`),
+    queryKey: ['companies', { q, page }],
+    queryFn: () => api.get<Page<Company>>(`/api/companies${qs({ q, page })}`),
+    placeholderData: keepPreviousData,
     enabled: opts.enabled,
   })
 }
@@ -130,15 +132,16 @@ export function useDeleteCompany() {
 /** <Autocomplete> source for picking an existing company. Does nothing until
  *  there is something to search for - pickers never load the whole list. */
 export function useCompanyOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
-  const companies = useCompanies(q, { enabled: q.trim() !== '' })
-  return { data: companies.data?.map((c) => ({ id: c.id, label: c.name })), isLoading: companies.isLoading }
+  const companies = useCompanies(q, 1, { enabled: q.trim() !== '' })
+  return { data: companies.data?.items.map((c) => ({ id: c.id, label: c.name })), isLoading: companies.isLoading }
 }
 
 // --- contacts ------------------------------------------------------------
-export function useContacts(filters: ContactFilters, opts: { enabled?: boolean } = {}) {
+export function useContacts(filters: ContactFilters, page = 1, opts: { enabled?: boolean } = {}) {
   return useQuery({
-    queryKey: ['contacts', filters],
-    queryFn: () => api.get<Contact[]>(`/api/contacts${qs({ ...filters })}`),
+    queryKey: ['contacts', filters, page],
+    queryFn: () => api.get<Page<Contact>>(`/api/contacts${qs({ ...filters, page })}`),
+    placeholderData: keepPreviousData,
     enabled: opts.enabled,
   })
 }
@@ -182,9 +185,9 @@ export function useDeleteContact() {
 
 /** <Autocomplete> source for picking an existing contact (idle until searched). */
 export function useContactOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
-  const contacts = useContacts({ q: q || undefined }, { enabled: q.trim() !== '' })
+  const contacts = useContacts({ q: q || undefined }, 1, { enabled: q.trim() !== '' })
   return {
-    data: contacts.data?.map((c) => ({ id: c.id, label: c.name, sublabel: c.company_name })),
+    data: contacts.data?.items.map((c) => ({ id: c.id, label: c.name, sublabel: c.company_name })),
     isLoading: contacts.isLoading,
   }
 }
@@ -202,9 +205,9 @@ function invalidateApplicationViews(qc: ReturnType<typeof useQueryClient>, id?: 
 /** <Autocomplete> source for picking an existing application - always shown
  *  as "Company - Role", never role alone. Idle until searched. */
 export function useApplicationOptions(q: string): { data?: AutocompleteOption[]; isLoading: boolean } {
-  const applications = useApplications({ q: q || undefined }, { enabled: q.trim() !== '' })
+  const applications = useApplications({ q: q || undefined }, 1, { enabled: q.trim() !== '' })
   return {
-    data: applications.data?.map((a) => ({
+    data: applications.data?.items.map((a) => ({
       id: a.id,
       label: `${a.company_name ?? '?'} - ${a.role_title}`,
       sublabel: a.status,
@@ -213,13 +216,14 @@ export function useApplicationOptions(q: string): { data?: AutocompleteOption[];
   }
 }
 
-export function useApplications(filters: ApplicationFilters, opts: { enabled?: boolean } = {}) {
+export function useApplications(filters: ApplicationFilters, page = 1, opts: { enabled?: boolean } = {}) {
   return useQuery({
-    queryKey: ['applications', filters],
+    queryKey: ['applications', filters, page],
     queryFn: () =>
-      api.get<Application[]>(
-        `/api/applications${qs({ q: filters.q, status: filters.status?.join(','), company_id: filters.company_id })}`,
+      api.get<Page<Application>>(
+        `/api/applications${qs({ q: filters.q, status: filters.status?.join(','), company_id: filters.company_id, page })}`,
       ),
+    placeholderData: keepPreviousData,
     enabled: opts.enabled,
   })
 }

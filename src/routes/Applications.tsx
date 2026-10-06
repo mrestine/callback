@@ -4,6 +4,7 @@ import { ApplicationForm } from '../components/ApplicationForm'
 import { Badge, Button, control, EmptyState, ErrorNote, Field, Loading, PageHeader, Popover, TextField, ToggleBadge } from '../components/ui'
 import { APPLICATION_STATUSES } from '../schemas'
 import { formatDate, formatDateOnly, titleCase } from '../lib/format'
+import { Pager, usePageParam } from '../components/Pager'
 import { useApplications, useCreateApplication } from '../lib/queries'
 
 /** Default filter: everything still live - excludes rejected / withdrawn / ghosted. */
@@ -25,11 +26,13 @@ export function Applications() {
   })
   const [creating, setCreating] = useState(false)
 
-  const applications = useApplications({ q: q || undefined, status })
+  const [page, setPage] = usePageParam()
+  const applications = useApplications({ q: q || undefined, status }, page)
   const create = useCreateApplication()
 
   function toggleStatus(s: string) {
     setStatus((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]))
+    setPage(1)
   }
 
   const filtersActive = !!q || !sameStatusSet(status, DEFAULT_STATUSES)
@@ -51,7 +54,7 @@ export function Applications() {
           <>
             Applications{' '}
             {applications.data && (
-              <span className="font-normal text-gray-400">· {applications.data.length}</span>
+              <span className="font-normal text-gray-400">· {applications.data.total}</span>
             )}
           </>
         }
@@ -74,7 +77,7 @@ export function Applications() {
       <div className="mb-3 flex flex-wrap gap-3">
         <div className="max-w-xs flex-1">
           <Field label="Search">
-            <TextField value={q} onChange={(e) => setQ(e.target.value)} placeholder="Role, company, or contact…" />
+            <TextField value={q} onChange={(e) => { setQ(e.target.value); setPage(1) }} placeholder="Role, company, or contact…" />
           </Field>
         </div>
         <div className="w-40">
@@ -101,11 +104,12 @@ export function Applications() {
         <Loading />
       ) : applications.isError ? (
         <ErrorNote error={applications.error} />
-      ) : applications.data.length === 0 ? (
+      ) : applications.data.items.length === 0 ? (
         <EmptyState>
           {filtersActive ? 'No applications match those filters.' : 'No applications yet.'}
         </EmptyState>
       ) : (
+        <>
         <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
           <table className="w-full text-sm">
             <thead className="border-b border-gray-200 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-900">
@@ -119,7 +123,7 @@ export function Applications() {
               </tr>
             </thead>
             <tbody>
-              {applications.data.map((a) => (
+              {applications.data.items.map((a) => (
                 <tr key={a.id} className="border-b border-gray-100 last:border-0 dark:border-gray-900">
                   <td className="px-3 py-2">
                     <Link to={`/applications/${a.id}`} className="font-medium text-blue-600 hover:underline dark:text-blue-400">
@@ -154,6 +158,8 @@ export function Applications() {
             </tbody>
           </table>
         </div>
+        <Pager data={applications.data} onPage={setPage} />
+        </>
       )}
     </div>
   )

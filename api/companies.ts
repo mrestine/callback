@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { sql } from './_db.js'
 import { requireAuth, requireTokenOrAuth } from './_auth.js'
-import { getId, methodNotAllowed, parseBody, qparam, withErrors } from './_http.js'
+import { getId, methodNotAllowed, parseBody, qparam, sendPage, withErrors } from './_http.js'
 import { companyCreate, companyUpdate } from '../src/schemas/index.js'
 import type { MatchCandidate } from '../src/schemas/index.js'
 
@@ -99,18 +99,19 @@ export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
 
 async function list(req: VercelRequest, res: VercelResponse, uid: number) {
   const q = qparam(req, 'q') ?? null
-  const rows = await sql`
+  await sendPage(req, res, (limit, offset) => sql`
     select c.*,
       (select count(*)::int from contacts ct
         where ct.company_id = c.id and ct.user_id = ${uid}) as contact_count,
       (select count(*)::int from applications a
-        where a.company_id = c.id and a.user_id = ${uid}) as application_count
+        where a.company_id = c.id and a.user_id = ${uid}) as application_count,
+      count(*) over() as total
     from companies c
     where c.user_id = ${uid}
       and (${q}::text is null or c.name ilike '%' || ${q} || '%')
-    order by c.name asc
-  `
-  res.status(200).json(rows)
+    order by c.name asc, c.id asc
+    limit ${limit} offset ${offset}
+  `)
 }
 
 async function getOne(res: VercelResponse, uid: number, id: number) {

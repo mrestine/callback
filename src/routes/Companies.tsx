@@ -2,13 +2,15 @@ import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { CompanyForm } from '../components/CompanyForm'
 import { Button, EmptyState, ErrorNote, Field, Loading, PageHeader, TextField } from '../components/ui'
+import { Pager, usePageParam } from '../components/Pager'
 import { useCompanies, useCreateCompany } from '../lib/queries'
 
 export function Companies() {
   const navigate = useNavigate()
   const [q, setQ] = useState('')
   const [creating, setCreating] = useState(false)
-  const companies = useCompanies(q)
+  const [page, setPage] = usePageParam()
+  const companies = useCompanies(q, page)
   const create = useCreateCompany()
 
   return (
@@ -18,7 +20,7 @@ export function Companies() {
           <>
             Companies{' '}
             {companies.data && (
-              <span className="font-normal text-gray-400">· {companies.data.length}</span>
+              <span className="font-normal text-gray-400">· {companies.data.total}</span>
             )}
           </>
         }
@@ -42,7 +44,10 @@ export function Companies() {
         <Field label="Search">
           <TextField
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => {
+              setQ(e.target.value)
+              setPage(1)
+            }}
             placeholder="Company name…"
           />
         </Field>
@@ -52,9 +57,10 @@ export function Companies() {
         <Loading />
       ) : companies.isError ? (
         <ErrorNote error={companies.error} />
-      ) : companies.data.length === 0 ? (
+      ) : companies.data.items.length === 0 ? (
         <EmptyState>{q ? 'No companies match that search.' : 'No companies yet.'}</EmptyState>
       ) : (
+        <>
         <div className="overflow-x-auto rounded-lg border border-gray-200 dark:border-gray-800">
           <table className="w-full text-sm">
             <thead className="border-b border-gray-200 bg-gray-50 text-left text-xs uppercase tracking-wide text-gray-500 dark:border-gray-800 dark:bg-gray-900">
@@ -66,7 +72,7 @@ export function Companies() {
               </tr>
             </thead>
             <tbody>
-              {companies.data.map((c) => (
+              {companies.data.items.map((c) => (
                 <tr key={c.id} className="border-b border-gray-100 last:border-0 dark:border-gray-900">
                   <td className="px-3 py-2">
                     <Link to={`/companies/${c.id}`} className="font-medium text-blue-600 hover:underline dark:text-blue-400">
@@ -94,6 +100,8 @@ export function Companies() {
             </tbody>
           </table>
         </div>
+        <Pager data={companies.data} onPage={setPage} />
+        </>
       )}
     </div>
   )

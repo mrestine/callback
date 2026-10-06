@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { sql } from './_db.js'
 import { requireAuth } from './_auth.js'
-import { getId, methodNotAllowed, parseBody, qparam, withErrors } from './_http.js'
+import { getId, methodNotAllowed, parseBody, qparam, sendPage, withErrors } from './_http.js'
 import { contactCreate, contactUpdate } from '../src/schemas/index.js'
 
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
@@ -37,17 +37,17 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
   const q = qparam(req, 'q') ?? null
   const kind = qparam(req, 'kind') ?? null
   const companyId = qparam(req, 'company_id') ?? null
-  const rows = await sql`
-    select ct.*, co.name as company_name
+  await sendPage(req, res, (limit, offset) => sql`
+    select ct.*, co.name as company_name, count(*) over() as total
     from contacts ct
     left join companies co on co.id = ct.company_id
     where ct.user_id = ${uid}
       and (${q}::text is null or ct.name ilike '%' || ${q} || '%')
       and (${kind}::text is null or ct.kind = ${kind})
       and (${companyId}::int is null or ct.company_id = ${companyId}::int)
-    order by ct.name asc
-  `
-  res.status(200).json(rows)
+    order by ct.name asc, ct.id asc
+    limit ${limit} offset ${offset}
+  `)
 }
 
 async function getOne(res: VercelResponse, uid: number, id: number) {

@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node'
 import { sql } from './_db.js'
 import { requireAuth } from './_auth.js'
-import { getId, methodNotAllowed, parseBody, qparam, withErrors } from './_http.js'
+import { getId, methodNotAllowed, parseBody, qparam, sendPage, withErrors } from './_http.js'
 import { applicationCreate, applicationUpdate } from '../src/schemas/index.js'
 
 export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
@@ -43,8 +43,9 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
   const statusParam = qparam(req, 'status') ?? null
   const statuses = statusParam ? statusParam.split(',').filter(Boolean) : null
   const companyId = qparam(req, 'company_id') ?? null
-  const rows = await sql`
+  await sendPage(req, res, (limit, offset) => sql`
     select a.*,
+      count(*) over() as total,
       -- applied_at is a plain date column (no timezone); overriding the a.*
       -- copy with an explicit ::text cast avoids the driver deserializing it
       -- back into a JS Date at some ambiguous midnight and shifting the day
@@ -69,8 +70,8 @@ async function list(req: VercelRequest, res: VercelResponse, uid: number) {
         coalesce((select max(created_at) from events e where e.application_id = a.id), a.created_at)
       ) desc,
       a.id desc
-  `
-  res.status(200).json(rows)
+    limit ${limit} offset ${offset}
+  `)
 }
 
 async function getOne(res: VercelResponse, uid: number, id: number) {
