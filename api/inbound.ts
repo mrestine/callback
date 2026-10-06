@@ -3,7 +3,7 @@ import { sql } from './_db.js'
 import { requireAuth, requireToken } from './_auth.js'
 import { getId, methodNotAllowed, parseBody, qparam, withErrors } from './_http.js'
 import { inboundSubmit } from '../src/schemas/index.js'
-import { matchEntities, needsDisambiguation, proposeOps } from './_inbound.js'
+import { matchEntities, needsDisambiguation, proposeOps, withApplicationCompanyNames } from './_inbound.js'
 
 export function reviewUrl(id: number): string {
   const base = (process.env.APP_BASE_URL ?? '').replace(/\/$/, '')
@@ -94,6 +94,7 @@ async function read(req: VercelRequest, res: VercelResponse) {
       select * from inbound_actions where id = ${id} and user_id = ${uid}
     `
     if (!row) return void res.status(404).json({ error: 'not found' })
+    row.proposal = await withApplicationCompanyNames(uid, row.proposal)
     return void res.status(200).json(row)
   }
 

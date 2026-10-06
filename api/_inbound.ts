@@ -172,6 +172,40 @@ async function matchApplication(
   return { chosen: activeAtCompany || strong ? Number(rows[0].id) : null, candidates }
 }
 
+/**
+ * Application candidates are labelled "Company - Role · status", but proposals
+ * stored before that label existed carry the role alone, which on its own
+ * ("Senior Software Engineer") doesn't say which application it is. Fill the
+ * company name in from the database for just those candidates, so the review
+ * screen never has to fetch the application list to do it.
+ */
+export async function withApplicationCompanyNames(uid: number, proposal: unknown): Promise<unknown> {
+  if (!Array.isArray(proposal)) return proposal
+  const ops = proposal as ProposalOp[]
+  const ids = new Set<number>()
+  for (const op of ops) {
+    if (!op.op.includes('application')) continue
+    for (const c of op.match?.candidates ?? []) ids.add(Number(c.id))
+  }
+  if (ids.size === 0) return proposal
+
+  const rows = await sql`
+    select a.id, co.name as company_name
+    from applications a
+    join companies co on co.id = a.company_id
+    where a.user_id = ${uid} and a.id = any(${[...ids]}::bigint[])
+  `
+  const nameById = new Map(rows.map((r) => [Number(r.id), String(r.company_name)]))
+  return ops.map((op) => {
+    if (!op.match || !op.op.includes('application')) return op
+    const candidates = op.match.candidates.map((c) => {
+      const name = nameById.get(Number(c.id))
+      return name && !c.label.startsWith(name) ? { ...c, label: `${name} - ${c.label}` } : c
+    })
+    return { ...op, match: { ...op.match, candidates } }
+  })
+}
+
 // --------------------------------------------------------------------------
 // Propose  (rules over match + email_kind; builds ops, writes nothing)
 // --------------------------------------------------------------------------

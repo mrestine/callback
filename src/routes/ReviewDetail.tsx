@@ -16,14 +16,13 @@ import { APPLICATION_STATUSES, CONTACT_KINDS, REMOTE_MODES, WARMTH_LEVELS } from
 import { formatDate, titleCase, toDateInput, todayInput } from '../lib/format'
 import {
   useApplicationOptions,
-  useApplications,
   useCompanyOptions,
   useContactOptions,
   useInboundAction,
   useResolveInbound,
   type OpOverride,
 } from '../lib/queries'
-import type { AutocompleteOption, InboundExtracted, MatchCandidate, ProposalOp } from '../lib/types'
+import type { AutocompleteOption, InboundExtracted, ProposalOp } from '../lib/types'
 
 const CREATE_OF: Record<string, string> = {
   link_company: 'create_company',
@@ -81,24 +80,6 @@ export function ReviewDetail() {
   const ops = useMemo(() => detail.data?.proposal ?? [], [detail.data])
   const [state, setState] = useState<Record<string, OpState> | null>(null)
 
-  // AI match candidates from older stored proposals (or an application
-  // matched with no company scoping) may not carry a company name in their
-  // label - backfill it client-side from the live applications list so it
-  // never depends on re-submitting the email.
-  const appsQuery = useApplications({})
-  const companyByAppId = useMemo(() => {
-    const m = new Map<number, string>()
-    // `id` comes back from Postgres bigint as a string over JSON on this API
-    // (unlike _inbound.ts's match candidates, which coerce it) - Number() both
-    // sides so the Map lookup below isn't a silent string/number mismatch.
-    for (const a of appsQuery.data ?? []) if (a.company_name) m.set(Number(a.id), a.company_name)
-    return m
-  }, [appsQuery.data])
-  const withCompany = (c: MatchCandidate): string => {
-    const name = companyByAppId.get(c.id)
-    return name && !c.label.startsWith(name) ? `${name} - ${c.label}` : c.label
-  }
-
   // lazily seed local state once the proposal has loaded - a link op's initial
   // `chosen` becomes a full {id,label} option (not just an id) so refLabels /
   // the Autocomplete never need to re-derive a label from op.match.candidates.
@@ -106,14 +87,13 @@ export function ReviewDetail() {
     state ??
     Object.fromEntries(
       ops.map((op) => {
-        const isApplication = op.op.includes('application')
         const cand = op.match?.candidates.find((c) => c.id === op.match?.chosen)
         return [
           op.id,
           {
             decision: op.decision,
             mode: op.op.startsWith('create_') ? 'create' : 'link',
-            chosen: cand ? { id: cand.id, label: isApplication ? withCompany(cand) : cand.label } : null,
+            chosen: cand ? { id: cand.id, label: cand.label } : null,
             args: initArgs(op, ex, detail.data?.occurred_at),
           } as OpState,
         ]
@@ -262,7 +242,6 @@ export function ReviewDetail() {
               s={opState[op.id]}
               onChange={(patch) => set(op.id, patch)}
               refLabels={refLabels}
-              withCompany={withCompany}
             />
           ))}
         </div>
@@ -356,13 +335,11 @@ function OpCard({
   s,
   onChange,
   refLabels,
-  withCompany,
 }: {
   op: ProposalOp
   s: OpState
   onChange: (patch: Partial<OpState>) => void
   refLabels: Record<string, string>
-  withCompany: (c: MatchCandidate) => string
 }) {
   const isLink = op.op.startsWith('link_')
   const isCompany = op.op.includes('company')
@@ -376,7 +353,7 @@ function OpCard({
   // not just those top picks - sorted by confidence, highest first.
   const seedOptions: AutocompleteOption[] = [...(op.match?.candidates ?? [])]
     .sort((a, b) => b.score - a.score)
-    .map((c) => ({ id: c.id, label: isApplication ? withCompany(c) : c.label }))
+    .map((c) => ({ id: c.id, label: c.label }))
 
   function target(refKey: string): string | null {
     const ref = op.refs?.[refKey]

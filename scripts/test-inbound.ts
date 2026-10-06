@@ -8,7 +8,7 @@
  */
 import 'dotenv/config'
 import { neon } from '@neondatabase/serverless'
-import { matchEntities, proposeOps, buildApplyPlan } from '../api/_inbound.ts'
+import { matchEntities, proposeOps, buildApplyPlan, withApplicationCompanyNames } from '../api/_inbound.ts'
 import { inboundSubmit } from '../src/schemas/index.ts'
 import type { Extracted } from '../src/schemas/index.ts'
 
@@ -456,6 +456,27 @@ async function scenarioCompanyNotes() {
   check('additional company gets ITS notes, not the first one', byId('c2')?.args?.name === 'Plumeria Labs' && byId('c2')?.args?.notes === 'Plumeria Labs does protein design.', byId('c2'))
 }
 
+async function scenarioCandidateCompanyNames() {
+  console.log('\n# stored application candidates get their company name on read')
+  const [co] = await sql`insert into companies (user_id, name) values (${TEST_UID}, 'Brindlewick') returning id`
+  const [app] = await sql`
+    insert into applications (user_id, company_id, role_title) values (${TEST_UID}, ${co.id}, 'Senior Software Engineer') returning id`
+  const id = Number(app.id)
+  const cand = (label: string) => ({ id, label, score: 0.9 })
+  const ops = [
+    { id: 'a1', op: 'link_application', decision: 'apply', match: { chosen: id, candidates: [cand('Senior Software Engineer · lead')] } },
+    { id: 'a2', op: 'link_application', decision: 'apply', match: { chosen: null, candidates: [cand('Brindlewick - Senior Software Engineer · lead')] } },
+    { id: 'c1', op: 'link_company', decision: 'apply', match: { chosen: null, candidates: [{ id, label: 'Some Company', score: 0.5 }] } },
+  ]
+  const out = (await withApplicationCompanyNames(TEST_UID, ops)) as typeof ops
+  check('a role-only label gets the company prefixed', out[0].match.candidates[0].label === 'Brindlewick - Senior Software Engineer · lead', out[0].match)
+  check('a label that already has the company is left alone', out[1].match.candidates[0].label === 'Brindlewick - Senior Software Engineer · lead', out[1].match)
+  check('non-application ops are not touched', out[2].match.candidates[0].label === 'Some Company', out[2].match)
+  const other = (await withApplicationCompanyNames(TEST_UID + 1, ops)) as typeof ops
+  check("another user's id cannot resolve a company name", other[0].match.candidates[0].label === 'Senior Software Engineer · lead', other[0].match)
+  check('a non-array proposal passes through', (await withApplicationCompanyNames(TEST_UID, null)) === null)
+}
+
 async function main() {
   await reset()
   try {
@@ -467,6 +488,7 @@ async function main() {
     await scenarioBareDateEventNeverUtcMidnight()
     await scenarioMultiOpportunity()
     await scenarioCompanyNotes()
+    await scenarioCandidateCompanyNames()
   } finally {
     await reset()
   }
