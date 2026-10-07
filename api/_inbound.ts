@@ -251,6 +251,18 @@ export interface ProposalResult {
   ops: ProposalOp[]
 }
 
+/** The operator's note as create_application args (only the parts that were given). */
+function operatorArgs(ex: Extracted): Record<string, string> {
+  const o = ex.operator_note
+  if (!o) return {}
+  return {
+    ...(o.jd_url ? { jd_url: o.jd_url } : {}),
+    ...(o.salary_range ? { salary_range: o.salary_range } : {}),
+    ...(o.remote ? { remote: o.remote } : {}),
+    ...(o.notes ? { notes: o.notes } : {}),
+  }
+}
+
 export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
   if (!ex.job_related || ex.email_kind === 'noise') return { status: 'dismissed', ops: [] }
 
@@ -280,6 +292,10 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
     // the company's headquarters, offered as the new application's location
     // (the reviewer edits it; remote roles mean HQ is the only place that matters)
     const companyHq = clean(opp.hiring_company?.hq_location)
+    // what the operator typed above the forward (job link, pay, work mode,
+    // other notes): about the application the email is about, so only the
+    // primary opportunity's new application takes it
+    const operator = i === 0 ? operatorArgs(ex) : {}
     const companyKnown = (!agency || isMulti) && !withheld && !!companyName
     const companyMatch = match.companies[i] ?? empty()
     const applicationMatch = match.applications[i] ?? empty()
@@ -331,6 +347,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
             role_title: clean(opp.role?.title) || '(role not stated)',
             status: initialStatus(kind, ex.status_signal),
             ...(companyHq ? { location: companyHq } : {}),
+            ...operator,
           },
           refs: companyRef ? { company_id: companyRef } : undefined,
           decision: 'accept',
@@ -346,6 +363,7 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
             role_title: clean(opp.role?.title) || '(role not stated)',
             status: 'lead',
             ...(companyHq ? { location: companyHq } : {}),
+            ...operator,
           },
           refs: companyRef ? { company_id: companyRef } : undefined,
           decision: 'skip',

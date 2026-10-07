@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { APPLICATION_STATUSES, CONTACT_KINDS, dateOnlyToInstant } from './index.js'
+import { APPLICATION_STATUSES, CONTACT_KINDS, REMOTE_MODES, dateOnlyToInstant } from './index.js'
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 /** Promotes a bare "yyyy-mm-dd" to a local-midnight instant before
@@ -68,6 +68,38 @@ const hiringCompany = z
   .partial()
   .passthrough()
 
+/** A link, only if it is an http(s) URL; anything else is dropped, never rejected. */
+const optionalUrl = z
+  .string()
+  .nullish()
+  .transform((v) => {
+    const t = v?.trim().slice(0, 2000) ?? ''
+    return /^https?:\/\/\S+$/i.test(t) ? t : null
+  })
+
+/**
+ * What the operator typed above the forwarded email, already sorted by the
+ * worker (callback-worker/src/operatorNote.ts) into application fields. It
+ * describes the application the email is about, so it lands on the primary
+ * opportunity's new application. Every part is optional and forgiving: a bad
+ * value is dropped, because a decoration must never bounce a submission.
+ */
+const operatorNote = z
+  .object({
+    jd_url: optionalUrl,
+    salary_range: z
+      .string()
+      .nullish()
+      .transform((v) => v?.trim().slice(0, 200) || null),
+    remote: z
+      .string()
+      .nullish()
+      .transform((v) => (REMOTE_MODES.includes(v as never) ? (v as (typeof REMOTE_MODES)[number]) : null)),
+    notes: optionalNotes,
+  })
+  .partial()
+  .passthrough()
+
 const opportunity = z
   .object({
     hiring_company: hiringCompany,
@@ -119,6 +151,8 @@ export const extractedSchema = z
       .nullish()
       .transform((v) => (APPLICATION_STATUSES.includes(v as never) ? (v as string) : null)),
     notes: nullableStr,
+    /** see `operatorNote` above; absent unless the operator wrote something */
+    operator_note: operatorNote.nullish().transform((v) => v ?? null),
   })
   .passthrough()
 

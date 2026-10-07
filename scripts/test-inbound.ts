@@ -524,6 +524,76 @@ async function scenarioCompanyHq() {
   check('an optional create_application is pre-filled as well', app3?.decision === 'skip' && app3.args?.location === 'Austin, TX', app3)
 }
 
+async function scenarioOperatorNote() {
+  console.log(String.fromCharCode(10) + '# extracted.operator_note: contract, mapping to the new application, apply')
+
+  const noReply = { name: '', email: 'no-reply@mail.example', org: null, is_agency_recruiter: false, kind: 'other', confidence: 0.9 }
+  const exFor = (hc: Record<string, unknown>, operator: unknown, kind = 'application_confirmation') =>
+    ({
+      job_related: true,
+      email_kind: kind,
+      sender: noReply,
+      hiring_company: { withheld: false, confidence: 0.9, ...hc },
+      role: { title: 'Engineer', confidence: 0.9 },
+      event: { type: 'email', subtype: null, occurred_at: null, summary: 'Application received.' },
+      status_signal: null,
+      notes: null,
+      ...(operator === undefined ? {} : { operator_note: operator }),
+    }) as Extracted
+
+  // --- the contract is forgiving ------------------------------------------
+  const wrap = (operator: unknown) => ({ external_ref: 'ref-op', source: 'test', extracted: { email_kind: 'application_confirmation', sender: {}, hiring_company: { name: 'Sablewood Analytics' }, role: {}, event: {}, operator_note: operator } })
+  const good = inboundSubmit.safeParse(wrap({ jd_url: ' https://jobs.example/vex/1 ', salary_range: ' 150-170k ', remote: 'hybrid', notes: ' ask about equity ' }))
+  const o = good.success ? good.data.extracted.operator_note : null
+  check('contract accepts and trims all four parts', !!o && o.jd_url === 'https://jobs.example/vex/1' && o.salary_range === '150-170k' && o.remote === 'hybrid' && o.notes === 'ask about equity', good.success ? o : good.error.issues)
+  const bad = inboundSubmit.safeParse(wrap({ jd_url: 'javascript:alert(1)', salary_range: 'x'.repeat(900), remote: 'anywhere', notes: 'y'.repeat(5000) }))
+  const b = bad.success ? bad.data.extracted.operator_note : null
+  check('a non-http link and an unknown work mode are dropped, not rejected', bad.success && !!b && b.jd_url === null && b.remote === null, bad.success ? b : bad.error.issues)
+  check('over-long pay and notes are cut', !!b && b.salary_range?.length === 200 && b.notes?.length === 2000, b)
+  const absent = inboundSubmit.safeParse(wrap(undefined))
+  check('operator_note is optional', absent.success && absent.data.extracted.operator_note === null, absent.success ? absent.data.extracted.operator_note : absent.error.issues)
+
+  // --- a new application takes it, and accepting stores it -----------------
+  const note = { jd_url: 'https://jobs.example/vex/1', salary_range: '150-170k', remote: 'hybrid', notes: 'ask about equity' }
+  const ex1 = exFor({ name: 'Sablewood Analytics', hq_location: 'Boston, MA' }, note)
+  const { ops: ops1 } = proposeOps(ex1, await matchEntities(TEST_UID, ex1, null))
+  const app1 = ops1.find((x) => x.op === 'create_application')
+  check('create_application carries the link, pay, work mode and notes', app1?.args?.jd_url === note.jd_url && app1.args.salary_range === '150-170k' && app1.args.remote === 'hybrid' && app1.args.notes === 'ask about equity', app1)
+  check('...alongside the headquarters location', app1?.args?.location === 'Boston, MA', app1)
+  await runApply(await seedInbound(ex1, null, '2026-09-22T10:00:00Z'), ops1, '2026-09-22T10:00:00Z')
+  const [row] = await sql`select jd_url, salary_range, remote, notes, location from applications where user_id = ${TEST_UID} and company_id = (select id from companies where user_id = ${TEST_UID} and name = 'Sablewood Analytics')`
+  check('accepting it stores all of them on the application', row?.jd_url === note.jd_url && row.salary_range === '150-170k' && row.remote === 'hybrid' && row.notes === 'ask about equity' && row.location === 'Boston, MA', row)
+
+  // --- nothing given: nothing added ----------------------------------------
+  const ex2 = exFor({ name: 'Draycott Systems' }, undefined)
+  const { ops: ops2 } = proposeOps(ex2, await matchEntities(TEST_UID, ex2, null))
+  const app2 = ops2.find((x) => x.op === 'create_application')
+  check('no operator_note -> none of those keys on the application', !!app2 && !('jd_url' in (app2.args ?? {})) && !('salary_range' in (app2.args ?? {})) && !('remote' in (app2.args ?? {})) && !('notes' in (app2.args ?? {})), app2)
+
+  const ex3 = exFor({ name: 'Draycott Systems' }, { salary_range: '90-100k' })
+  const { ops: ops3 } = proposeOps(ex3, await matchEntities(TEST_UID, ex3, null))
+  const app3 = ops3.find((x) => x.op === 'create_application')
+  check('only the parts that were given are added', app3?.args?.salary_range === '90-100k' && !('jd_url' in (app3.args ?? {})) && !('remote' in (app3.args ?? {})), app3)
+
+  // --- the optional (skipped by default) application offer takes it too ----
+  const ex4 = exFor({ name: 'Tolliver Robotics' }, note, 'recruiter_outreach')
+  const { ops: ops4 } = proposeOps(ex4, await matchEntities(TEST_UID, ex4, null))
+  const app4 = ops4.find((x) => x.op === 'create_application')
+  check('an optional create_application is pre-filled as well', app4?.decision === 'skip' && app4.args?.jd_url === note.jd_url, app4)
+
+  // --- several opportunities: the note belongs to the first only -----------
+  const agency = { name: 'Dee Okoro', email: 'dee.okoro@staffing.example', org: 'Staffing Co', is_agency_recruiter: true, kind: 'recruiter', confidence: 0.9 }
+  const ex5 = {
+    ...exFor({ name: 'Ulverston Cloud' }, note, 'recruiter_outreach'),
+    sender: agency,
+    additional_opportunities: [{ hiring_company: { name: 'Marrow Biotics', withheld: false, confidence: 0.9 }, role: { title: 'Backend Engineer', confidence: 0.9 } }],
+  } as Extracted
+  const { ops: ops5 } = proposeOps(ex5, await matchEntities(TEST_UID, ex5, null))
+  const byId = (id: string) => ops5.find((x) => x.id === id)
+  check('the first opportunity gets the note', byId('a1')?.args?.jd_url === note.jd_url, byId('a1'))
+  check('the additional opportunity does not', !('jd_url' in (byId('a2')?.args ?? {})) && !('notes' in (byId('a2')?.args ?? {})), byId('a2'))
+}
+
 async function main() {
   await reset()
   try {
@@ -536,6 +606,7 @@ async function main() {
     await scenarioMultiOpportunity()
     await scenarioCompanyNotes()
     await scenarioCompanyHq()
+    await scenarioOperatorNote()
     await scenarioCandidateCompanyNames()
   } finally {
     await reset()
