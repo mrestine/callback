@@ -56,6 +56,9 @@ The search uses Serper's free tier to search for details like industry, main pro
 
 In the end, there is no tool usage yet. In an early version of building the company summary generator, I gave it a tool, but the potential disagreement in company existence between Callback and the worker was a dealbreaker. I will try again to find a proper use case for a tool in the future, but it will have to not come at the expense of the existing functionality, and it has to be the right solution for the problem at hand.
 
+## Operator's Notes
+Along with the forwarded email content, I there's another potential model call that happens if I include anything in the forward email's own body. For example, compensation bands, job description links, and even job titles can be missing from an application confirmation email. I can just paste those into the email body before I forward it, the code will pick up on it, the model will parse the text into relevant data fields, and they will get appended to the changes that get sent to Callback. This removes the step of me having to sit on those data fields until the ingestion finishes and filling them in manually at review time.
+
 ## Diagram
 <img width="930" height="615" alt="Excalidraw architecture diagram" src="https://github.com/user-attachments/assets/5220da73-8f13-4b34-a11b-c41862044e8f" />
 
@@ -66,8 +69,5 @@ The original vision was for the updates to be applied automatically, but I would
 
 Given that the tradeoff is 2 clicks versus blind trust in AI for something as impactful to me as job applications, I'll make the clicks, even if over 90% of the time I don't make any changes to the proposed changes before sending them.
 
-
 ## The Future
-The next thing I have planned is operator's notes - added context when I forward an email for ingestion. One case might be that a job title, salary range, or job description link is missing from the application confirmation email. Job title is usually there, but the other two are generally not. I end up filling in the missing fields when I'm reviewing the changes. This means I have to keep that data close at hand while I wait for the worker to pick up the email and do its work. Instead, I would like to put this data in the body of the forwarded email (above the Forwarded message divider), and add another model call to parse out any data in there, and resolve that data to the available fields for an application (or other entity). The data would then make its way into the change proposal, and I can approve without the need to have kept track of extra info like the JD link or salary expectations.
-
-I'm also still on the hunt for a reason to develop a tool and hope that my little 7B model is up to the task when it's time. I would like to push this closer to an "agentic" flow rather than just an AI-powered workflow, if only for my own edification.
+I'm honestly not sure what's next for Callback. I've been using it since the operator's notes change without feeling the need to push further changes. I have shifted my focus to building my own harness for this Ollama instance instead. Maybe an idea will strike me soon, but until then, Callback will shift into a maintenance mode.
