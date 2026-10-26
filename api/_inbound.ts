@@ -107,7 +107,7 @@ export async function matchEntities(
     const priorApp = i === 0 ? threadPriorApp : null
     const application =
       !agency && !withheld && company.chosen != null
-        ? await matchApplication(uid, roleTitle, company.chosen, priorApp)
+        ? await matchApplication(uid, roleTitle, company.chosen, priorApp, ex.email_kind)
         : empty()
     applications.push(application)
   }
@@ -150,6 +150,7 @@ async function matchApplication(
   role: string,
   companyId: number,
   threadPriorApp: number | null,
+  kind: string,
 ): Promise<EntityMatch> {
   const rows = await sql`
     select a.id, a.role_title, a.status, co.name as company_name,
@@ -167,9 +168,14 @@ async function matchApplication(
     score: Number(r.score),
   }))
   if (threadPriorApp) return { chosen: threadPriorApp, candidates }
-  const activeAtCompany = rows.length === 1
   const strong = rows[0] && Number(rows[0].score) >= 0.55
-  return { chosen: activeAtCompany || strong ? Number(rows[0].id) : null, candidates }
+  // A rejection, interview or offer that names no (or another) role is about
+  // the application you have there, so a company's only active application is
+  // taken. A confirmation is the opposite: it says you just applied, and a
+  // second application at a company you already applied to is exactly when
+  // there IS an active one - so only a real match on the role may pick it.
+  const onlyOneActive = rows.length === 1 && kind !== 'application_confirmation'
+  return { chosen: onlyOneActive || strong ? Number(rows[0].id) : null, candidates }
 }
 
 /**
@@ -330,14 +336,33 @@ export function proposeOps(ex: Extracted, match: MatchResult): ProposalResult {
     if (companyKnown || applicationMatch.chosen != null) {
       appRef = `$a${n}`
       if (applicationMatch.chosen != null || applicationMatch.candidates.length > 0) {
+        // An application_confirmation with no real match is a NEW application
+        // (the candidates are only there in case it is an old one): start the
+        // review in "create" and let the reviewer pick one from the dropdown.
+        const preferCreate = kind === 'application_confirmation' && applicationMatch.chosen == null
         ops.push({
           id: `a${n}`,
           op: 'link_application',
+          // defaults for "create new instead" (a link never writes them)
+          args: {
+            ...(preferCreate
+              ? {
+                  role_title: clean(opp.role?.title) || '(role not stated)',
+                  status: initialStatus(kind, ex.status_signal),
+                }
+              : {}),
+            ...(companyHq ? { location: companyHq } : {}),
+            ...operator,
+          },
           refs: companyRef ? { company_id: companyRef } : undefined,
           match: applicationMatch,
           decision: 'accept',
-          reason:
-            applicationMatch.chosen == null ? 'pick the application or switch to create' : undefined,
+          ...(preferCreate ? { prefer: 'create' as const } : {}),
+          reason: preferCreate
+            ? 'no close match - will create a new application; pick an existing one below if this is it'
+            : applicationMatch.chosen == null
+              ? 'pick the application or switch to create'
+              : undefined,
         })
       } else if (WANTS_APPLICATION.has(kind) || isMulti) {
         ops.push({
@@ -460,6 +485,7 @@ export function needsDisambiguation(ops: ProposalOp[]): boolean {
   return ops.some(
     (o) =>
       o.decision !== 'skip' &&
+      o.prefer !== 'create' &&
       o.op.startsWith('link_') &&
       (o.match?.chosen == null) &&
       (o.match?.candidates.length ?? 0) > 0,

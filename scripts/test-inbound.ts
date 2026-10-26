@@ -8,7 +8,8 @@
  */
 import 'dotenv/config'
 import { neon } from '@neondatabase/serverless'
-import { matchEntities, proposeOps, buildApplyPlan, withApplicationCompanyNames } from '../api/_inbound.ts'
+import { matchEntities, proposeOps, buildApplyPlan, needsDisambiguation, withApplicationCompanyNames } from '../api/_inbound.ts'
+import { mergeOverrides } from '../api/inbound/resolve.ts'
 import { inboundSubmit } from '../src/schemas/index.ts'
 import type { Extracted } from '../src/schemas/index.ts'
 
@@ -594,6 +595,79 @@ async function scenarioOperatorNote() {
   check('the additional opportunity does not', !('jd_url' in (byId('a2')?.args ?? {})) && !('notes' in (byId('a2')?.args ?? {})), byId('a2'))
 }
 
+async function scenarioSecondApplicationAtSameCompany() {
+  console.log(String.fromCharCode(10) + '# a second application at a company you already have one at')
+
+  const noReply = { name: '', email: 'no-reply@mail.example', org: null, is_agency_recruiter: false, kind: 'other', confidence: 0.9 }
+  const exFor = (company: string, role: string | null, kind: string, operator?: unknown) =>
+    ({
+      job_related: true,
+      email_kind: kind,
+      sender: noReply,
+      hiring_company: { name: company, withheld: false, confidence: 0.9 },
+      role: { title: role, confidence: 0.9 },
+      event: { type: 'email', subtype: null, occurred_at: null, summary: 'Update.' },
+      status_signal: null,
+      notes: null,
+      ...(operator ? { operator_note: operator } : {}),
+    }) as Extracted
+  const seed = async (company: string, role: string, status = 'applied') => {
+    const [co] = await sql`insert into companies (user_id, name) values (${TEST_UID}, ${company}) returning id`
+    const [app] = await sql`insert into applications (user_id, company_id, role_title, status) values (${TEST_UID}, ${co.id}, ${role}, ${status}) returning id`
+    return { companyId: Number(co.id), appId: Number(app.id) }
+  }
+  const run = async (ex: Extracted) => {
+    const m = await matchEntities(TEST_UID, ex, null)
+    return { m, ...proposeOps(ex, m) }
+  }
+  const countApps = async (companyId: number) => Number((await sql`select count(*)::int as n from applications where user_id = ${TEST_UID} and company_id = ${companyId}`)[0].n)
+
+  const a = await seed('Nethercott Ironworks', 'Senior Software Engineer, Monetization Engineering')
+  const note = { jd_url: 'https://jobs.example/nethercott/8075888', salary_range: '177-365k' }
+
+  // --- a confirmation for a DIFFERENT role: a new application by default ---
+  const ex1 = exFor('Nethercott Ironworks', 'Staff Software Engineer, Web Product Enablement', 'application_confirmation', note)
+  const r1 = await run(ex1)
+  const link1 = r1.ops.find((o) => o.id === 'a1')
+  check('the only application at the company is NOT picked for a different role', r1.m.applications[0].chosen === null && r1.m.applications[0].candidates.length === 1, r1.m.applications[0])
+  check('...the proposal prefers a new application', link1?.op === 'link_application' && link1.prefer === 'create' && link1.decision === 'accept', link1)
+  check('...the existing one stays on offer in the dropdown', link1?.match?.candidates[0]?.id === a.appId, link1?.match)
+  check('...with the role, status and the note filled in for the new one', link1?.args?.role_title === 'Staff Software Engineer, Web Product Enablement' && link1.args.status === 'applied' && link1.args.jd_url === note.jd_url && link1.args.salary_range === '177-365k', link1?.args)
+  check('...and it does not hold the review up for a pick', !needsDisambiguation(r1.ops), r1.ops)
+
+  // --- applying without touching it creates the new application ------------
+  const applied = mergeOverrides(r1.ops, {})
+  check('an apply that leaves the op alone turns it into a create', applied.find((o) => o.id === 'a1')?.op === 'create_application')
+  await runApply(await seedInbound(ex1, null, '2026-10-24T16:34:00Z'), applied, '2026-10-24T16:34:00Z')
+  const rows = await sql`select id, role_title, jd_url, salary_range from applications where user_id = ${TEST_UID} and company_id = ${a.companyId} order by id`
+  check('...a second application exists, with the link and pay', rows.length === 2 && rows[1].role_title === 'Staff Software Engineer, Web Product Enablement' && rows[1].jd_url === note.jd_url && rows[1].salary_range === '177-365k', rows)
+  check('...and the first one is untouched', Number(rows[0].id) === a.appId && rows[0].jd_url === null, rows[0])
+
+  // --- the reviewer picks the existing one from the dropdown ---------------
+  const b = await seed('Fenwick Harbor', 'Platform Engineer')
+  const ex2 = exFor('Fenwick Harbor', 'Staff Platform Engineer, Billing', 'application_confirmation', note)
+  const r2 = await run(ex2)
+  const picked = mergeOverrides(r2.ops, { a1: { chosen: b.appId } })
+  check('choosing an existing application keeps it a link', picked.find((o) => o.id === 'a1')?.op === 'link_application' && picked.find((o) => o.id === 'a1')?.match?.chosen === b.appId)
+  await runApply(await seedInbound(ex2, null, '2026-10-24T17:00:00Z'), picked, '2026-10-24T17:00:00Z')
+  check('...and no new application is created', (await countApps(b.companyId)) === 1)
+
+  // --- the cases the old rule was for still work ---------------------------
+  const c = await seed('Gallowglass Media', 'Senior Backend Engineer')
+  const rej = await run(exFor('Gallowglass Media', null, 'rejection'))
+  check('a rejection that names no role still links the only application', rej.m.applications[0].chosen === c.appId && !rej.ops.find((o) => o.id === 'a1')?.prefer, rej.ops.find((o) => o.id === 'a1'))
+  const inv = await run(exFor('Gallowglass Media', 'Backend Engineer', 'interview_invite'))
+  check('an interview invite that names a looser role still links it', inv.m.applications[0].chosen === c.appId, inv.m.applications[0])
+
+  // --- a confirmation for the SAME role is still recognised ----------------
+  const same = await run(exFor('Gallowglass Media', 'Senior Backend Engineer', 'application_confirmation'))
+  check('a confirmation for the same role links to it', same.m.applications[0].chosen === c.appId && !same.ops.find((o) => o.id === 'a1')?.prefer, same.m.applications[0])
+
+  // --- a confirmation with no role cannot claim an existing application ----
+  const noRole = await run(exFor('Gallowglass Media', null, 'application_confirmation'))
+  check('a confirmation naming no role prefers a new application', noRole.ops.find((o) => o.id === 'a1')?.prefer === 'create' && noRole.m.applications[0].chosen === null, noRole.ops.find((o) => o.id === 'a1'))
+}
+
 async function main() {
   await reset()
   try {
@@ -607,6 +681,7 @@ async function main() {
     await scenarioCompanyNotes()
     await scenarioCompanyHq()
     await scenarioOperatorNote()
+    await scenarioSecondApplicationAtSameCompany()
     await scenarioCandidateCompanyNames()
   } finally {
     await reset()

@@ -196,6 +196,11 @@ export interface ProposalOp {
   match?: { candidates: MatchCandidate[]; chosen: number | null }
   decision: 'accept' | 'skip'
   reason?: string
+  /** On a link op: callback found no real match and would rather create a new
+   *  row. The review screen starts in "create" mode (the match dropdown is
+   *  still there to pick an existing one), and an apply that doesn't touch the
+   *  op creates it. See matchApplication in api/_inbound.ts. */
+  prefer?: 'create'
 }
 
 // --- POST /api/inbound/resolve -----------------------------------------

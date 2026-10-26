@@ -92,7 +92,9 @@ export function ReviewDetail() {
           op.id,
           {
             decision: op.decision,
-            mode: op.op.startsWith('create_') ? 'create' : 'link',
+            // a link callback would rather have created (prefer) starts in create
+            // mode; the Match dropdown is still there to pick an existing row
+            mode: op.op.startsWith('create_') || op.prefer === 'create' ? 'create' : 'link',
             chosen: cand ? { id: cand.id, label: cand.label } : null,
             args: initArgs(op, ex, detail.data?.occurred_at),
           } as OpState,

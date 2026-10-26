@@ -89,14 +89,20 @@ export default withErrors(async (req: VercelRequest, res: VercelResponse) => {
   res.status(200).json({ status: 'applied', applied })
 })
 
+const CREATE_OF = {
+  link_company: 'create_company',
+  link_application: 'create_application',
+  link_contact: 'create_contact',
+} as const
+
 /** apply per-op overrides from the review UI onto the stored proposal */
-function mergeOverrides(
+export function mergeOverrides(
   ops: ProposalOp[],
   overrides: Record<string, { decision?: 'accept' | 'skip'; chosen?: number | null; args?: Record<string, unknown>; op?: ProposalOp['op'] }>,
 ): ProposalOp[] {
   return ops.map((op) => {
     const ov = overrides[op.id]
-    if (!ov) return op
+    if (!ov) return withPreferredCreate(op)
     const next: ProposalOp = { ...op }
     if (ov.decision) next.decision = ov.decision
     if (ov.op) next.op = ov.op
@@ -104,6 +110,14 @@ function mergeOverrides(
     if (ov.chosen !== undefined) {
       next.match = { candidates: op.match?.candidates ?? [], chosen: ov.chosen ?? null }
     }
-    return next
+    return withPreferredCreate(next)
   })
+}
+
+/** An op callback wanted created, with no existing row picked, applies as a create. */
+function withPreferredCreate(op: ProposalOp): ProposalOp {
+  if (op.prefer === 'create' && op.op in CREATE_OF && (op.match?.chosen ?? null) == null) {
+    return { ...op, op: CREATE_OF[op.op as keyof typeof CREATE_OF] }
+  }
+  return op
 }
